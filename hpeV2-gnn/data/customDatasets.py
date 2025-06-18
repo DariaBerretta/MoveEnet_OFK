@@ -51,6 +51,17 @@ class eh36m_gcn(OnDiskDataset):
         # files = ['cam2_S1_Directions/gamer.csv','cam2_S1_Directions_1/gamer.csv','cam2_S1_Discussion/gamer.csv']
         return files
 
+    # @property
+    # def raw_file_names(self):
+    #     root = join(self.root, 'raw')
+    #     files = []
+    #     for dirpath, dirnames, filenames in os.walk(root):
+    #         for f in filenames:
+    #             if f.endswith("gamer.csv"):
+    #                 files.append(os.path.join(dirpath, f))
+    #     return files
+
+
     @property
     def processed_file_names(self):
         # name_list = [('data'+str(i)+'.pt')for i in range(10)]

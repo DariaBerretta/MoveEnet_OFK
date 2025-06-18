@@ -5,7 +5,7 @@ https://github.com/fire717
 home = '/data'
 cfg = {
     ##### Global Setting
-    'connectivity': 15, #'Added connection for pixel values [12, 15, 20, 30]
+    'connectivity': 0, #'Added connection for pixel values [12, 15, 20, 30]
     'node_loss_weight': 1,
     'target_loss_weight': 1,
     'dev': False,

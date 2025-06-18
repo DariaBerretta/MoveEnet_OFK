@@ -78,17 +78,17 @@ cfg['data_path_dev'] = args.data_path_dev
 # Dataset path on disk
 if cfg['dev']:
     # Gaurvi data path
-    # data_path = '/home/ggoyal/data/h36m_cropped/ledge_toy/'
+    # data_path = '/home/ggoyal/data/h36m_cropped/ledge_toy/raw'
 
     # My data path
-    data_path = '/home/dberretta-iit.local/data/tast_gamer_GNN'
+    data_path = '/home/dberretta-iit.local/data/toy_gamer/'
     # data_path = cfg['data_path_dev']
 else:
     # Gaurvi data path
-    # data_path = '/home/ggoyal/data/h36m_cropped/ledge_toy/'
+    # data_path = '/home/ggoyal/data/h36m_cropped/ledge_toy/raw/'
 
     # My data path
-    data_path = '/home/dberretta-iit.local/data/tast_gamer_GNN/'
+    data_path = '/home/dberretta-iit.local/data/toy_gamer/'
     # data_path = cfg['data_path']
 if not os.path.exists(data_path):
     print(data_path)
@@ -132,7 +132,8 @@ num_joints = task_to_num_joints[cfg['task']]
 exp_setup = [cfg['connectivity'], cfg['node_feature'], args.arch]
 print(exp_setup)
 
-transforms_current = [my_transforms.check_x_size]
+transforms_current = []
+# transforms_current = [my_transforms.check_x_size]
 if cfg['node_feature'] != None:
     transforms_current.append(maps.node_feature(cfg['node_feature']))
 if cfg['connectivity'] > 0:
@@ -147,9 +148,12 @@ transforms_current = my_transforms.chain_transforms(transforms_current)
 
 # Dataset and dataloader setup
 # dataset = customDatasets.eh36m_spline_ledge(data_path, transform=transforms_current, pre_filter=hpe_filter, schema=schema_spline)
-dataset = customDatasets.eh36m_spline_gamer(data_path,transform=transforms_current, pre_filter=hpe_filter)
+
+dataset = customDatasets.eh36m_spline_gamer(data_path,transform=transforms_current, pre_filter=hpe_filter, schema=schema_spline)
 
 dataset = dataset.shuffle()
+
+
 # print(dataset.get(10).x.shape)
 # show_vals = (dataset.multi_get([i for i in range(100)]))
 train_dataset, val_dataset = dataset_split(dataset, style=cfg['dataset_split'], fraction=cfg['data_fraction'], dataset_label = args.dataset)
