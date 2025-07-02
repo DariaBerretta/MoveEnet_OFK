@@ -1,1 +1,11 @@
 hpeV2-gnn/.venv/
+hpeV2-gnn/lightning_logs/
+*.pyc
+*.pyo
+__pycache__/
+*.pyd
+*.pdb
+*.egg-info/
+dist/
+build/
+*.log
