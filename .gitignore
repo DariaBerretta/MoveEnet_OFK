@@ -1,4 +1,4 @@
-hpeV2-gnn/.venv/
+.venv/
 hpeV2-gnn/lightning_logs/
 *.pyc
 *.pyo

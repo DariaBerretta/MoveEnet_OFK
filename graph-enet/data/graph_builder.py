@@ -1,5 +1,5 @@
 
-from pyScarf.scarf.scarf_class import SCARF
+from ..pyScarf.scarf.scarf_class import SCARF
 from sklearn.decomposition import PCA
 import numpy as np
 
