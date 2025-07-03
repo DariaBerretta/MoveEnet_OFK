@@ -31,10 +31,8 @@ class CARF:
         """
         Get from each RF (CARF) only the active events
         """
-        return self.points[self.points[:, 3] == 1]     # dreturn datatype 
+        return self.points[self.points[:, 3] == 1]     # return datatype 
 
-    
-    # To DO : get_active_events
     # TO DO : get_all_events
 
 
@@ -122,7 +120,7 @@ class SCARF:
     
     def get_active_RF(self, threshold_ratio=0.3):
         """
-        Return a list of (RF index, carf, active_events) for each RF that has more than threshold_ratio * N active events
+        Return a list of (RF index, carf, active_events) for each RF that has more than (threshold_ratio * N) active events
         """
         active_rfs = []
         for idx, carf in enumerate(self.rfs):
