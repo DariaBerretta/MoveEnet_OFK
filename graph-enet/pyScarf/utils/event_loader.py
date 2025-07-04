@@ -4,7 +4,7 @@ import sys
 import logging
 
 # Add bimvee path (adjust if needed)
-# sys.path.append("/home/dberretta-iit.local/Documents/Repos/SCARF_analysis/SCARF_analysis/submodule/bimvee")
+sys.path.append("/home/dberretta-iit.local/Documents/Repos/SCARF_analysis/SCARF_analysis/submodule/bimvee")
 from bimvee.importers.ImporterDataLog import ImporterDataLog
 
 
@@ -28,3 +28,25 @@ def load_events_from_log(folder_path, file_name="data.log"):
     events['pol'] = event_dict['pol']
 
     return events
+
+def load_batch_from_log(log_path, start_time, end_time):
+    """
+    Load a single batch of events from withing a specific time interval defined by a start and a end time
+    """
+    
+    end_idx = 0
+
+    events = load_events_from_log(log_path)
+
+    start_idx = end_idx
+
+    while start_idx < len(events) and events['ts'][start_idx] < start_time:
+        start_idx += 1
+
+
+    end_idx = start_idx
+
+    while end_idx < N and events['ts'][end_idx] <= end_time:
+        end_idx += 1
+    
+    return events[start_idx:end_idx]
