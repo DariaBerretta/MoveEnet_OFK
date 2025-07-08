@@ -78,10 +78,16 @@ cfg['data_path_dev'] = args.data_path_dev
 # Dataset path on disk
 if cfg['dev']:
     # data_path = '/home/ggoyal/data/h36m_cropped/ledge_toy/'
-    data_path = cfg['data_path_dev']
+    # data_path = cfg['data_path_dev']
+
+    # My data path
+    data_path = '/home/dberretta-iit.local/data/toy_gamer/'
 else:
     # data_path = '/home/ggoyal/data/h36m_cropped/ledge/'
-    data_path = cfg['data_path']
+    # data_path = cfg['data_path']
+
+     # My data path
+    data_path = '/home/dberretta-iit.local/data/toy_gamer/'
 if not os.path.exists(data_path):
     print(data_path)
     print('Data path does not exist. Exiting.')
@@ -138,7 +144,10 @@ transforms_current = my_transforms.chain_transforms(transforms_current)
 
 
 # Dataset and dataloader setup
-dataset = customDatasets.eh36m_spline_ledge(data_path, transform=transforms_current, pre_filter=hpe_filter, schema=schema_spline)
+# dataset = customDatasets.eh36m_spline_ledge(data_path, transform=transforms_current, pre_filter=hpe_filter, schema=schema_spline)
+
+dataset = customDatasets.eh36m_spline_gamer(data_path,transform=transforms_current, pre_filter=hpe_filter, schema=schema_spline)
+
 dataset = dataset.shuffle()
 # print(dataset.get(10).x.shape)
 # show_vals = (dataset.multi_get([i for i in range(100)]))

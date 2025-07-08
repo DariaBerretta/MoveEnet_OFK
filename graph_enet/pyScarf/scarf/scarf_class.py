@@ -33,7 +33,6 @@ class CARF:
         """
         return self.points[self.points[:, 3] == 1]     # return datatype 
 
-    # TO DO : get_all_events
 
 
 class SCARF:
@@ -125,6 +124,10 @@ class SCARF:
         active_rfs = []
         for idx, carf in enumerate(self.rfs):
             events = carf.get_active_events()
+
+            #print(f"[INFO] Buffer dimension: {carf.N}")
+            #print(f"[INFO] ratio of active events: {len(events)}/{len(carf.points)}")
+
             if len(events) > carf.N * threshold_ratio:
                 active_rfs.append((idx, carf, events))
         return active_rfs

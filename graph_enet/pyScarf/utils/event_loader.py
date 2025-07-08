@@ -46,7 +46,7 @@ def load_batch_from_log(log_path, start_time, end_time):
 
     end_idx = start_idx
 
-    while end_idx < N and events['ts'][end_idx] <= end_time:
+    while end_idx < len(events) and events['ts'][end_idx] <= end_time:
         end_idx += 1
     
     return events[start_idx:end_idx]

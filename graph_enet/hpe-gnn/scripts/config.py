@@ -5,7 +5,7 @@ https://github.com/fire717
 home = '/data'
 cfg = {
     ##### Global Setting
-    'connectivity': 15, #'Added connection for pixel values [12, 15, 20, 30]
+    'connectivity': 0, #'Added connection for pixel values [12, 15, 20, 30]
     'node_loss_weight': 1,
     'target_loss_weight': 1,
     'dev': False,
@@ -21,7 +21,7 @@ cfg = {
     ##### Train Hyperparameters
     'learning_rate': 0.001,  # 1.25e-4
     'batch_size': 1024,
-    'epochs': 100,
+    'epochs': 10,
     'optimizer': 'Adam',  # Adam  SGD
     # 'scheduler': 'MultiStepLR-70,100-0.1',  # default  SGDR-5-2  CVPR   step-4-0.8 MultiStepLR
     'dataset_split': 'subject', #[subject, dev]. Dev will use 'fraction' ""with value 0.01."
