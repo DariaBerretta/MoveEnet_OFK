@@ -10,7 +10,7 @@ from torch_geometric.data import Data
 
 
 
-def build_scarf_graph(scarf, k_neighbour=5, active_ratio=0.25, radius=25):
+def build_scarf_graph(scarf, k_neighbour=5, active_ratio=0.2, radius=25):
     
     active_rfs = scarf.get_active_RF(active_ratio)
     n_active_rfs = len(active_rfs)
@@ -69,6 +69,7 @@ def build_scarf_graph(scarf, k_neighbour=5, active_ratio=0.25, radius=25):
     # edge_index = knn_graph(x=positions, k=k_neighbour, loop=False)
     # edge_index = approx_knn_graph(x=positions, k = k_neighbour, loop=False)
     edge_index = radius_graph(x=positions, r=radius, max_num_neighbors=k_neighbour, loop=False)
+    # edge_index = radius_graph(x=positions, r=radius, loop=False)
 
     # Graph creation
     graph = Data(x = nodes, edge_index = edge_index, pos=positions)
