@@ -42,6 +42,7 @@ while timer < events['ts'][-1]:
     img32 = scarf.get_surface()
     img8U = (img32 * 255).clip(0, 255).astype('uint8')
     inverted = cv2.bitwise_not(img8U)
+    colored = cv2.cvtColor(inverted, cv2.COLOR_GRAY2BGR)
 
     # === Overlay graph if possible ===
     graph = build_scarf_graph(scarf)
@@ -56,14 +57,14 @@ while timer < events['ts'][-1]:
         for u, v in G.edges():
             p1 = pos_dict[u]
             p2 = pos_dict[v]
-            cv2.line(inverted, p1, p2, (100, 100, 255), 1)  # Red-ish edges
+            cv2.line(colored, p1, p2, (100, 100, 255), 1)  # Red-ish edges
 
         # Draw nodes
         for node, (x, y) in pos_dict.items():
-            cv2.circle(inverted, (x, y), 3, (255, 255, 0), -1)  # Cyan nodes
+            cv2.circle(colored, (x, y), 3, (255, 255, 0), -1)  # Cyan nodes
 
     # === Show final overlay ===
-    cv2.imshow("SCARF with Graph", inverted)
+    cv2.imshow("SCARF with Graph", colored)
     key = cv2.waitKey(1)
     if key == 27:  # ESC to exit early
         break

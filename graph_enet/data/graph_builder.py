@@ -1,8 +1,8 @@
-from pyScarf.scarf.scarf_class import SCARF
+from graph_enet.pyScarf.scarf.scarf_class import SCARF
 from sklearn.decomposition import PCA
 import numpy as np
 import torch
-from torch_geometric.nn import knn_graph
+from torch_geometric.nn import knn_graph, approx_knn_graph, radius_graph
 import networkx as nx
 import matplotlib.pyplot as plt
 from torch_geometric.utils import to_networkx
@@ -10,7 +10,7 @@ from torch_geometric.data import Data
 
 
 
-def build_scarf_graph(scarf, k_neighbour=5, active_ratio=0.35):
+def build_scarf_graph(scarf, k_neighbour=5, active_ratio=0.25, radius=25):
     
     active_rfs = scarf.get_active_RF(active_ratio)
     n_active_rfs = len(active_rfs)
@@ -66,10 +66,13 @@ def build_scarf_graph(scarf, k_neighbour=5, active_ratio=0.35):
     # Creation of the edges 
     positions = nodes[:, 1:3]                                       # The kNN is based on the distance between the "center of mass" (x_mean, y_mean) of each RFs
 
-    edge_index = knn_graph(x=positions, k=k_neighbour, loop=False)
+    # edge_index = knn_graph(x=positions, k=k_neighbour, loop=False)
+    # edge_index = approx_knn_graph(x=positions, k = k_neighbour, loop=False)
+    edge_index = radius_graph(x=positions, r=radius, max_num_neighbors=k_neighbour, loop=False)
 
     # Graph creation
     graph = Data(x = nodes, edge_index = edge_index, pos=positions)
+    
 
     return graph
 
