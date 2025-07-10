@@ -128,6 +128,10 @@ class SCARF:
             #print(f"[INFO] Buffer dimension: {carf.N}")
             #print(f"[INFO] ratio of active events: {len(events)}/{len(carf.points)}")
 
+            # If all the active events are all in the same position the RF is discarded
+            if np.unique(events[:, :2], axis=0).shape[0] == 1:
+                continue
+
             if len(events) > carf.N * threshold_ratio:
                 active_rfs.append((idx, carf, events))
         return active_rfs
