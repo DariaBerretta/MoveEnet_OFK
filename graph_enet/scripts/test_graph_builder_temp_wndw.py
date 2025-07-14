@@ -4,7 +4,6 @@ from graph_enet.data.graph_builder import build_scarf_graph
 import matplotlib.pyplot as plt
 import networkx as nx
 from torch_geometric.utils import to_networkx
-from graph_enet.pyScarf.utils.slt_ppr_filter import SpatialFilter
 
 # === SCARF Parameters ===
 rf_size = 14
@@ -20,10 +19,6 @@ events = load_events_from_log(log_path)
 # === Init SCARF ===
 scarf= SCARF(res, rf_size, alpha, C)
 N = len(events)
-
-# === Init Salt&Pepper filter ===
-filter = SpatialFilter()
-filter.initialise(res[1], res[0], period=0.1, spatial_range=1)
 
 # === Main loop ===
 timer = 0.0
@@ -44,9 +39,7 @@ while timer < events['ts'][-1]:
 
     # Update SCARF with the new batch
     for ev in batch:
-        # Salt and Pepper noise removal
-         if filter.check(ev['x'], ev['y'], ev['pol'], ev['ts']):
-            scarf.update(ev['x'], ev['y'], ev['pol'])
+        scarf.update(ev['x'], ev['y'], ev['pol'])
 
     # Build the new Graph  
     graph = build_scarf_graph(scarf)

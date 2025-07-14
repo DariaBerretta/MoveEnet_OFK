@@ -2,7 +2,7 @@ import cv2
 import numpy as np
 import networkx as nx
 from torch_geometric.utils import to_networkx
-
+from graph_enet.pyScarf.utils.slt_ppr_filter import SpatialFilter
 from graph_enet.pyScarf.utils.event_loader import load_events_from_log
 from graph_enet.pyScarf.scarf.scarf_class import SCARF
 from graph_enet.data.graph_builder import build_scarf_graph
@@ -24,6 +24,10 @@ scarf = SCARF(res, rf_size, alpha, C)
 cv2.namedWindow("SCARF with Graph", cv2.WINDOW_NORMAL)
 cv2.resizeWindow("SCARF with Graph", res)
 
+# === Init Salt&Pepper filter ===
+filter = SpatialFilter()
+filter.initialise(res[1], res[0], period=0.1, spatial_range=1)
+
 # === Main loop ===
 timer = 0.0
 idx = 0
@@ -36,7 +40,9 @@ while timer < events['ts'][-1]:
     batch = events[start_idx:idx]
 
     for ev in batch:
-        scarf.update(ev['x'], ev['y'], ev['pol'])
+        # Salt and Pepper noise removal
+         if filter.check(ev['x'], ev['y'], ev['pol'], ev['ts']):
+            scarf.update(ev['x'], ev['y'], ev['pol'])
 
     # === Get SCARF grayscale image ===
     img32 = scarf.get_surface()

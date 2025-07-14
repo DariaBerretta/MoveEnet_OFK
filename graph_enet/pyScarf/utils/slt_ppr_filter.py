@@ -32,7 +32,7 @@ class VNoiseFilter:
         self.x_tfilter = True
         self.t_tfilter = t_param
 
-    def use_spatial_filter(self, t_param, s_param=1):
+    def use_spatial_filter(self, t_param, s_param):
         self.x_sfilter = True
         self.t_sfilter = t_param
         self.s_sfilter = s_param
@@ -42,14 +42,14 @@ class VNoiseFilter:
         Returns True if the event is valid (passes the filter),
         False if it's considered noise.
         """
-        if not self.initialised:
-            raise RuntimeError("VNoiseFilter not initialized. Call initialise() first.")
+        # if not self.initialised:
+        #    raise RuntimeError("VNoiseFilter not initialized. Call initialise() first.")
 
         add = True
 
         # === TEMPORAL FILTER ===
         if self.x_tfilter:
-            if self.POL[y, x] == p:
+            if p == self.POL[y, x]:
                 if t - self.SAE[y, x] < self.t_tfilter:
                     self.SAE[y, x] = t
                     return False  # reject
@@ -67,8 +67,8 @@ class VNoiseFilter:
                     if t - self.SAE[yi, xi] < self.t_sfilter:
                         add = True
                         break
-                if add:
-                    break
+                #if add:
+                    #break
 
         # === UPDATE SAE and POL ===
         self.SAE[y, x] = t
@@ -89,13 +89,13 @@ class SpatialFilter:
         self.height = None
         self.width = None
 
-    def initialise(self, height, width, period=0.01, spatial_range=1):
+    def initialise(self, height, width, period=0.1, spatial_range=1):
         self.height = height
         self.width = width
         self.period = period
         self.range = spatial_range
-        h_pad = height + 2 * spatial_range
-        w_pad = width + 2 * spatial_range
+        h_pad = height + (2 * spatial_range)
+        w_pad = width + (2 * spatial_range)
         self.sae[0] = np.zeros((h_pad, w_pad), dtype=np.float64)
         self.sae[1] = np.zeros((h_pad, w_pad), dtype=np.float64)
 
@@ -103,18 +103,19 @@ class SpatialFilter:
         """
         Returns True if the event is NOT noise, False if it is noise.
         """
+        
+        fr = 2 * self.range + 1
         x_pad = x + self.range
         y_pad = y + self.range
         sae_p = self.sae[p]
 
-        # Check central pixel
+         # --- Check if event is too isolated (central pixel is too old)
         if ts - self.period > sae_p[y_pad, x_pad]:
-            passed = False
+            pass_event = False
         else:
-            passed = True
+            pass_event = True
 
-        # Stamp full region
-        r = self.range
-        sae_p[y_pad - r: y_pad + r + 1, x_pad - r: x_pad + r + 1] = ts
+         # --- Update the patch: same as OpenCV ROI: Rect(x, y, fr, fr)
+        sae_p[y_pad : y_pad + fr, x_pad : x_pad + fr] = ts
 
-        return passed
+        return pass_event

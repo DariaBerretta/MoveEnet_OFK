@@ -2,6 +2,7 @@ from graph_enet.pyScarf.scarf.scarf_class import SCARF
 from sklearn.decomposition import PCA
 import numpy as np
 import torch
+import math
 from torch_geometric.nn import knn_graph, approx_knn_graph, radius_graph
 import networkx as nx
 import matplotlib.pyplot as plt
@@ -10,7 +11,8 @@ from torch_geometric.data import Data
 
 
 
-def build_scarf_graph(scarf, k_neighbour=5, active_ratio=0.2, radius=25):
+
+def build_scarf_graph(scarf, k_neighbour=4, active_ratio=0.15, radius=25):
     
     active_rfs = scarf.get_active_RF(active_ratio)
     n_active_rfs = len(active_rfs)
@@ -36,7 +38,8 @@ def build_scarf_graph(scarf, k_neighbour=5, active_ratio=0.2, radius=25):
         v1,v2 = pca.components_
         lambda_1,lambda_2 = pca.explained_variance_
 
-        eccentricity = np.sqrt(1-lambda_2/lambda_1)
+       
+        eccentricity = np.sqrt(1 - lambda_2/lambda_1) 
 
         feature = [RF_idx, 
                    x_mean, y_mean, 
@@ -74,8 +77,8 @@ def build_scarf_graph(scarf, k_neighbour=5, active_ratio=0.2, radius=25):
     # Graph creation
     graph = Data(x = nodes, edge_index = edge_index, pos=positions)
     
-
     return graph
+    
 
     
 

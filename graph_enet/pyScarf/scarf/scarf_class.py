@@ -130,7 +130,7 @@ class SCARF:
 
             # If all the active events are all in the same position the RF is discarded
             if np.unique(events[:, :2], axis=0).shape[0] == 1:
-                continue
+               continue
 
             if len(events) > carf.N * threshold_ratio:
                 active_rfs.append((idx, carf, events))

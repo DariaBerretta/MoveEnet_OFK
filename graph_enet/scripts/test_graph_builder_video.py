@@ -27,7 +27,7 @@ filter = SpatialFilter()
 filter.initialise(res[1], res[0], period=0.1, spatial_range=1)
 
 # === Initialize Video Writer ===
-output_path = "/home/dberretta-iit.local/data/graph_construction/graph_on_scarf_slt_ppr.mp4"
+output_path = "/home/dberretta-iit.local/data/graph_construction/graph_slt_ppr.mp4"
 fourcc = cv2.VideoWriter_fourcc(*'mp4v')
 fps = int(1.0 / dt)
 video_writer = cv2.VideoWriter(output_path, fourcc, fps, res)
@@ -49,11 +49,8 @@ while timer < events['ts'][-1]:
          if filter.check(ev['x'], ev['y'], ev['pol'], ev['ts']):
             scarf.update(ev['x'], ev['y'], ev['pol'])
 
-    # === Get SCARF grayscale image ===
-    img32 = scarf.get_surface()
-    img8U = (img32 * 255).clip(0, 255).astype('uint8')
-    inverted = cv2.bitwise_not(img8U)
-    colored = cv2.cvtColor(inverted, cv2.COLOR_GRAY2BGR)
+    # === Create blank image for graph visualization only ===
+    colored = np.full((res[1], res[0], 3), 255, dtype=np.uint8)
 
     # === Overlay graph if possible ===
     graph = build_scarf_graph(scarf)
