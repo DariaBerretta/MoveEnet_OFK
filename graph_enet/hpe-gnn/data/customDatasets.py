@@ -37,7 +37,8 @@ class batchData(Data):
         if key == 'sample':
             return None
         return super().__cat_dim__(key, value, *args, **kwargs)
-class eh36m_gcn(OnDiskDataset):
+c
+lass eh36m_gcn(OnDiskDataset):
     def __init__(self, root, transform=None, pre_filter=None, backend='sqlite', schema=object, log=True):
         super().__init__(root, transform, pre_filter, backend, schema, log)
         self.db.schema = schema
@@ -355,6 +356,7 @@ class eh36m_spline_gamer(eh36m_gcn):
                     point0 = [int(segments[i,0]),int(segments[i,1])]
                     point1 = [int(segments[i,2]),int(segments[i,3])]
                     node_info = np.array(segments[i,4:]).astype(float)
+
                     point_index = [0,0]
                     j = 0
                     for point in [point0,point1]:

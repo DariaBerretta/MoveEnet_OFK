@@ -73,7 +73,8 @@ def use_pos_as_input(data: batchData):
 def check_x_size(data: batchData):
     if len(data.x.shape) == 1:
         if data.x.shape[:] != len(data.pos):
-            data.x = data.x.reshape(-1,2)
+            # data.x = data.x.reshape(-1,2)
+            data.x = data.x
         else:
             data.x = data.x[:, None]
     return data

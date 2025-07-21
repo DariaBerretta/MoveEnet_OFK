@@ -82,12 +82,15 @@ if cfg['dev']:
 
     # My data path
     data_path = '/home/dberretta-iit.local/data/toy_gamer/'
+    # data_path = '/home/dberretta-iit.local/data/tast_gamer_GNN/'
 else:
     # data_path = '/home/ggoyal/data/h36m_cropped/ledge/'
     # data_path = cfg['data_path']
 
-     # My data path
+    # My data path
     data_path = '/home/dberretta-iit.local/data/toy_gamer/'
+    # data_path = '/home/dberretta-iit.local/data/tast_gamer_GNN/'
+
 if not os.path.exists(data_path):
     print(data_path)
     print('Data path does not exist. Exiting.')
@@ -149,8 +152,8 @@ transforms_current = my_transforms.chain_transforms(transforms_current)
 dataset = customDatasets.eh36m_spline_gamer(data_path,transform=transforms_current, pre_filter=hpe_filter, schema=schema_spline)
 
 dataset = dataset.shuffle()
-# print(dataset.get(10).x.shape)
-# show_vals = (dataset.multi_get([i for i in range(100)]))
+print(dataset.get(10).x.shape)
+show_vals = (dataset.multi_get([i for i in range(100)]))
 train_dataset, val_dataset = dataset_split(dataset, style=cfg['dataset_split'], fraction=cfg['data_fraction'], dataset_label = args.dataset)
 train_loader = DataLoader(train_dataset, batch_size=cfg['batch_size'], shuffle=True, num_workers=2)
 val_loader = DataLoader(val_dataset, batch_size=cfg['batch_size'], num_workers=2)

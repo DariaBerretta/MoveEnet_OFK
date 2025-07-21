@@ -2,11 +2,9 @@ from graph_enet.pyScarf.scarf.scarf_class import SCARF
 from sklearn.decomposition import PCA
 import numpy as np
 import torch
-import math
 from torch_geometric.nn import knn_graph, approx_knn_graph, radius_graph
 import networkx as nx
 import matplotlib.pyplot as plt
-from torch_geometric.utils import to_networkx
 from torch_geometric.data import Data
 
 
@@ -17,13 +15,13 @@ def build_scarf_graph(scarf, k_neighbour=4, active_ratio=0.15, radius=25):
     active_rfs = scarf.get_active_RF(active_ratio)
     n_active_rfs = len(active_rfs)
 
-    n_nodes = len(active_rfs)        # Number os nodes 
+    # n_nodes = len(active_rfs)        # Number os nodes 
     # n_features = 10                # RF_index, x_mean, y_mean, PCA_1, PCA_2, Eccentricity
     
     node_features= []                # List of node features
 
 
-    print(f"[INFO] Number of total RFs: {len(scarf.rfs)}, \n [INFO] Number of active RFs: {n_active_rfs}.")
+    # print(f"[INFO] Number of total RFs: {len(scarf.rfs)}, \n [INFO] Number of active RFs: {n_active_rfs}.")
     
     # Determine the node features
     for rf in active_rfs:
@@ -78,7 +76,6 @@ def build_scarf_graph(scarf, k_neighbour=4, active_ratio=0.15, radius=25):
     graph = Data(x = nodes, edge_index = edge_index, pos=positions)
     
     return graph
-    
 
     
 
