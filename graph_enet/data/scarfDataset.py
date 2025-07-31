@@ -38,6 +38,23 @@ class scarfDataset(Dataset):
 
         return file_names
     
+    def read_raw_paths(self, raw_paths):
+        """
+        Splits the raw_paths list into two lists:
+        - event_paths: all paths containing '/ch0dvs/data.log'
+        - skltn_paths: all paths containing '/ch0GT50Hzskeleton/data.log'
+        """
+        event_paths = []
+        skltn_paths = []
+
+        for path in raw_paths:
+            if '/ch0dvs/data.log' in path:
+                event_paths.append(path)
+            elif '/ch0GT50Hzskeleton/data.log' in path:
+                skltn_paths.append(path)
+
+        return event_paths, skltn_paths
+    
     @property
     def processed_file_names(self):
         # This is needed by torch_geometric to decide if process() needs to run
@@ -51,13 +68,12 @@ class scarfDataset(Dataset):
         os.makedirs(self.processed_dir, exist_ok=True)      # Create processed dir if not there
 
         # === load events data from log file ===
-        event_path = self.raw_paths[0]          # Only one file
-        sklt_path = self.raw_paths[1]
-        efolder_path = os.path.dirname(event_path)
-        sfolder_path = os.path.dirname(sklt_path)
+        event_path, sklt_path = self.read_raw_paths(self.raw_paths)
+        efolder_path = os.path.dirname(event_path[0])
+        sfolder_path = os.path.dirname(sklt_path[0])
 
-        file_name = os.path.basename(event_path)
-        
+        file_name = os.path.basename(event_path[0])
+
         events = load_events_from_log(efolder_path, file_name)
 
         # === load skeleton data from log file ===
