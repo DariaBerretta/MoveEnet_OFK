@@ -2,9 +2,9 @@ import sys
 import os
 import cv2
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from graph_enet.pyScarf.utils.event_loader import load_skeleton_from_log
+from graph_enet.utils.log_loader import load_skeleton_from_log
 from graph_enet.pyScarf.scarf.scarf_class import SCARF
-from graph_enet.pyScarf.utils.event_loader import load_events_from_log
+from graph_enet.utils.log_loader import load_events_from_log
 
 # Example path to skeleton data file
 sklt_fpath = "/home/dberretta-iit.local/data/cam2_S1_Discussion/ch0GT50Hzskeleton/"

@@ -1,5 +1,5 @@
 from pyScarf.scarf.scarf_class import SCARF
-from pyScarf.utils.event_loader import  load_batch_from_log
+from graph_enet.utils.log_loader import  load_batch_from_log
 from data.graph_builder import build_scarf_graph
 
 

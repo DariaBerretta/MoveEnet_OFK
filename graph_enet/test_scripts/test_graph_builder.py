@@ -1,5 +1,5 @@
 from graph_enet.pyScarf.scarf.scarf_class import SCARF
-from graph_enet.pyScarf.utils.event_loader import load_events_from_log
+from graph_enet.utils.log_loader import load_events_from_log
 from graph_enet.data.graph_builder import build_scarf_graph
 import matplotlib.pyplot as plt
 import networkx as nx

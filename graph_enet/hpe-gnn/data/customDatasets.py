@@ -1,6 +1,3 @@
-# This file defines how to build a graph from the input for a dataset
-
-
 import os
 import time
 import os.path as osp
@@ -37,8 +34,7 @@ class batchData(Data):
         if key == 'sample':
             return None
         return super().__cat_dim__(key, value, *args, **kwargs)
-c
-lass eh36m_gcn(OnDiskDataset):
+class eh36m_gcn(OnDiskDataset):
     def __init__(self, root, transform=None, pre_filter=None, backend='sqlite', schema=object, log=True):
         super().__init__(root, transform, pre_filter, backend, schema, log)
         self.db.schema = schema

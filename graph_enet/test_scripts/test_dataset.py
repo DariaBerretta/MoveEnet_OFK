@@ -1,4 +1,4 @@
-from scarfDataset import scarfDataset
+from graph_enet.data.scarfDataset import scarfDataset
 
 # events file path
 dataset = scarfDataset(root="/home/dberretta-iit.local/data/new_scarfGNN")

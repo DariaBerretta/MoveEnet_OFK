@@ -10,12 +10,12 @@ from torch_geometric.data import Data
 
 
 
-def build_scarf_graph(scarf, k_neighbour=4, active_ratio=0.15, radius=25):
+def build_scarf_graph(scarf, current_skeleton, k_neighbour=4, active_ratio=0.15, radius=25):
     
     active_rfs = scarf.get_active_RF(active_ratio)
-    n_active_rfs = len(active_rfs)
-
-    # n_nodes = len(active_rfs)        # Number os nodes 
+    
+    # n_active_rfs = len(active_rfs)
+    # n_nodes = len(active_rfs)       
     # n_features = 10                # RF_index, x_mean, y_mean, PCA_1, PCA_2, Eccentricity
     
     node_features= []                # List of node features
@@ -25,7 +25,7 @@ def build_scarf_graph(scarf, k_neighbour=4, active_ratio=0.15, radius=25):
     
     # Determine the node features
     for rf in active_rfs:
-        RF_index, carf, events = rf
+        RF_index, _, events = rf
         RF_idx = RF_index
         x_mean = np.mean(events[:,0])
         y_mean = np.mean(events[:,1])
@@ -36,7 +36,6 @@ def build_scarf_graph(scarf, k_neighbour=4, active_ratio=0.15, radius=25):
         v1,v2 = pca.components_
         lambda_1,lambda_2 = pca.explained_variance_
 
-       
         eccentricity = np.sqrt(1 - lambda_2/lambda_1) 
 
         feature = [RF_idx, 
@@ -45,6 +44,7 @@ def build_scarf_graph(scarf, k_neighbour=4, active_ratio=0.15, radius=25):
                    v2[0],v2[1], 
                    lambda_1, lambda_2, 
                    eccentricity]
+        
         node_features.append(feature)
 
         # print(f"RF_index: {int(RF_idx)}")
@@ -69,21 +69,11 @@ def build_scarf_graph(scarf, k_neighbour=4, active_ratio=0.15, radius=25):
 
     # edge_index = knn_graph(x=positions, k=k_neighbour, loop=False)
     # edge_index = approx_knn_graph(x=positions, k = k_neighbour, loop=False)
-    edge_index = radius_graph(x=positions, r=radius, max_num_neighbors=k_neighbour, loop=False)
     # edge_index = radius_graph(x=positions, r=radius, loop=False)
+    edge_index = radius_graph(x=positions, r=radius, max_num_neighbors=k_neighbour, loop=False)
 
     # Graph creation
-    graph = Data(x = nodes, edge_index = edge_index, pos=positions)
-    
+    graph = Data(x = nodes, edge_index = edge_index, pos=positions, y=current_skeleton)
+
     return graph
 
-    
-
-
-
-
-
-
-
-
-        

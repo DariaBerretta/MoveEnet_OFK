@@ -3,7 +3,7 @@ import numpy as np
 import networkx as nx
 from torch_geometric.utils import to_networkx
 from graph_enet.pyScarf.utils.slt_ppr_filter import SpatialFilter
-from graph_enet.pyScarf.utils.event_loader import load_events_from_log
+from graph_enet.utils.log_loader import load_events_from_log
 from graph_enet.pyScarf.scarf.scarf_class import SCARF
 from graph_enet.data.graph_builder import build_scarf_graph
 
