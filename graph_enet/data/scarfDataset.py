@@ -54,12 +54,13 @@ class scarfDataset(Dataset):
                 skltn_paths.append(path)
 
         return event_paths, skltn_paths
-    
+
     @property
     def processed_file_names(self):
-        # This is needed by torch_geometric to decide if process() needs to run
-        return ['data_0.pt']  # Just a placeholder, doesn't need to exist yet
-
+        # ensure processed_dir exists, if not create it
+        os.makedirs(self.processed_dir, exist_ok=True)
+        # Dynamically list all .pt files in the processed directory
+        return [f for f in os.listdir(self.processed_dir) if f.endswith('.pt')]
 
     def download(self):
         pass                    # No download needed, file are already be in `raw_dir`

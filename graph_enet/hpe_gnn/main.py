@@ -17,6 +17,7 @@ from utils.training_utils import test_ckpt_path
 from utils.model_utils import GraphVisualization
 from argparse import ArgumentParser
 from scripts.config import cfg
+from graph_enet.data.scarfDataset import scarfDataset
 
 # Trainer arguments
 parser = ArgumentParser()
@@ -82,6 +83,7 @@ if cfg['dev']:
 
     # My data path
     data_path = '/home/dberretta-iit.local/data/toy_gamer/'
+    # data_path = '/home/dberretta-iit.local/data/new_scarfGNN/'
     # data_path = '/home/dberretta-iit.local/data/tast_gamer_GNN/'
 else:
     # data_path = '/home/ggoyal/data/h36m_cropped/ledge/'
@@ -89,6 +91,7 @@ else:
 
     # My data path
     data_path = '/home/dberretta-iit.local/data/toy_gamer/'
+    # data_path = '/home/dberretta-iit.local/data/new_scarfGNN/'
     # data_path = '/home/dberretta-iit.local/data/tast_gamer_GNN/'
 
 if not os.path.exists(data_path):
@@ -150,6 +153,8 @@ transforms_current = my_transforms.chain_transforms(transforms_current)
 # dataset = customDatasets.eh36m_spline_ledge(data_path, transform=transforms_current, pre_filter=hpe_filter, schema=schema_spline)
 
 dataset = customDatasets.eh36m_spline_gamer(data_path,transform=transforms_current, pre_filter=hpe_filter, schema=schema_spline)
+
+# dataset = scarfDataset(data_path)
 
 dataset = dataset.shuffle()
 
