@@ -56,7 +56,7 @@ if ckpt_path == None:
     print('checkpoint path does not exist. Exiting.')
     exit()
 
-lightning_checkpoint = torch.load(ckpt_path, map_location=lambda storage, loc: storage)
+lightning_checkpoint = torch.load(ckpt_path, map_location=lambda storage, loc: storage, weights_only=False)
 hyperparams = lightning_checkpoint["hyper_parameters"]
 
 for key, value in hyperparams.items():

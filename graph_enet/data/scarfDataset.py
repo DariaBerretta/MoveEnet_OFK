@@ -145,4 +145,4 @@ class scarfDataset(Dataset):
 
     def get(self, idx):
         path = osp.join(self.processed_dir, f'ch0dvs_data_{idx}.pt')
-        return torch.load(path)
+        return torch.load(path, weights_only=False)

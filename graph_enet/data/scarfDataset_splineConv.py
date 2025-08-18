@@ -148,4 +148,4 @@ class scarfDataset_splineConv(Dataset):
         if not files:
             raise IndexError(f"No processed file found for index {idx}")
         path = osp.join(self.processed_dir, files[0])
-        return torch.load(path)
+        return torch.load(path, weights_only=False)

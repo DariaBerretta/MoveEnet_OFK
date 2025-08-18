@@ -3,9 +3,6 @@ import json
 import argparse
 import numpy as np
 
-# # Force CPU only to avoid CUDA initialization issues
-# os.environ['CUDA_VISIBLE_DEVICES'] = ''
-
 import torch
 import pytorch_lightning as pl
 from torch_geometric.loader import DataLoader
@@ -35,6 +32,8 @@ import warnings
 # silence the specific FutureWarning about torch.load weights_only default change
 warnings.filterwarnings("ignore", message=".*weights_only=False.*", category=FutureWarning)
 
+# TO run in --dev mode in terminal:
+# python graph_enet/test_scripts/test_scarf_train_splineConv.py --dev --label dev --data_fraction 0.01 --dataset_split dev --epochs 5 --batch_size 16 --learning_rate 0.001 --node_loss_weight 1.0 --target_loss_weight 1.0 --arch single_weight
 
 # Argument parser creation and arguments definition
 parser = argparse.ArgumentParser(description="Test SCARF SplineConv Training")
@@ -266,13 +265,13 @@ print(f'[INFO] Model initialized')
 
 # dev mode
 if cfg['dev']:
-    trainer = pl.Trainer(fast_dev_run=5, enable_progress_bar=True, accelerator="cpu")
+    trainer = pl.Trainer(fast_dev_run=5, enable_progress_bar=True)
 else:
     logger = pl.loggers.TensorBoardLogger("lightning_logs", name=cfg['label'])
     early_stop_callback = EarlyStopping(monitor="loss/val_epoch", min_delta=0.00, patience=5, verbose=False, mode="min",
                                         check_finite=True)
     trainer = pl.Trainer(max_epochs=cfg['epochs'], check_val_every_n_epoch=3, callbacks=[MyProgressBar(),
-                         early_stop_callback], logger=logger, min_epochs=int(cfg['epochs']/2), accelerator="cpu")
+                         early_stop_callback], logger=logger, min_epochs=int(cfg['epochs']/2))
     # # #Create directories if they do not exist and store cfg hyperparams
     # # os.makedirs(logger.log_dir, exist_ok=True)
     # # with open(os.path.join(logger.log_dir,'cfg.json'), 'w') as fp:
