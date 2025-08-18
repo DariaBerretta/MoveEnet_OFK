@@ -117,7 +117,7 @@ class SCARF:
     def get_surface(self):
         return self.img
     
-    def get_active_RF(self, threshold_ratio=0.3):
+    def get_active_RF(self, threshold_ratio: float = 0.15):
         """
         Return a list of (RF index, carf, active_events) for each RF that has more than (threshold_ratio * N) active events
         """

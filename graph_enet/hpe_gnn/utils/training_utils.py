@@ -1,7 +1,7 @@
 # This file has mappings from command line arguments to their respective functions
 
 
-import data.transforms as my_transforms
+import graph_enet.hpe_gnn.data.transforms as my_transforms
 import os
 import numpy as np
 

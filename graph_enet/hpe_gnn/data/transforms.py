@@ -4,7 +4,7 @@ import sys
 from torch_geometric.data import Data
 from torch_geometric.nn import pool
 sys.path.append('..')
-from data.customDatasets import batchData
+from graph_enet.hpe_gnn.data.customDatasets import batchData
 from torch_geometric.transforms import Cartesian
 
 def check_and_join_tensors(tensor_first, tensor_additional):

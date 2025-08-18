@@ -1,7 +1,7 @@
 
 from torch import abs, sum, float32, int64
 from torch_geometric.data.database import TensorInfo
-from data import h36m_utils as h36m
+from graph_enet.hpe_gnn.data import h36m_utils as h36m
 
 def hpe_filter(sample):
     return check_sample_length(sample) & check_y_values_sample(sample)
@@ -79,3 +79,11 @@ schema_spline = {'x': TensorInfo(float32, (-1,)),
                  'sample': TensorInfo(int64, (3, -1))
                  }
 
+# schema_scarf_spline = {
+#     'x': TensorInfo(float32, (-1, 10)),           # Node features: [N_nodes, 10]
+#     'edge_index': TensorInfo(int64, (2, -1)),     # Edge indices: [2, N_edges]
+#     'edge_attr': TensorInfo(float32, (-1, 2)),    # Edge attributes: [N_edges, 2] (dx, dy for SplineConv)
+#     'y': TensorInfo(float32, (1, 26)),            # Target: [1, 26] (13 joints × 2 coordinates)
+#     'th_pck': TensorInfo(float32, (1,)),          # PCK threshold: [1]
+#     'pos': TensorInfo(float32, (-1, 2))           # Node positions: [N_nodes, 2]
+#     }

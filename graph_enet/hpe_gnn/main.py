@@ -7,12 +7,12 @@ from torch_geometric.loader import DataLoader
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 from torch import Tensor
 
-from data import customDatasets
-import data.transforms as my_transforms
+from graph_enet.hpe_gnn.data import customDatasets
+import graph_enet.hpe_gnn.data.transforms as my_transforms
 from model import hpegnn
 from utils.dataset_utils import hpe_filter, dataset_split, schema_spline
 from utils.library_utils import MyProgressBar
-import utils.training_utils as maps
+import graph_enet.hpe_gnn.utils.training_utils as maps
 from utils.training_utils import test_ckpt_path
 from utils.model_utils import GraphVisualization
 from argparse import ArgumentParser
@@ -21,40 +21,99 @@ from graph_enet.data.scarfDataset import scarfDataset
 
 # Trainer arguments
 parser = ArgumentParser()
-parser.add_argument('--data_fraction', type=float, default=cfg['data_fraction'], help='Fraction of dataset to be used [0.01,0.1,1]')
-parser.add_argument('--dataset_split', type=str, default=cfg['dataset_split'],
-                    help="[subject, dev]. Dev will use 'fraction' with value 0.01.", choices=['subject','dev'])
-parser.add_argument('--learning_rate', type=float, default=cfg['learning_rate'], help='Constant Learning rate [0.0001,0.001,01]')
-parser.add_argument('--epochs', type=int, default=cfg['epochs'], help='Total epochs [1,10,20,50, 100]')
-parser.add_argument('--batch_size', type=int, default=cfg['batch_size'], help='Batch size [1,8,32,256,1024]')
-# parser.add_argument('--num_joints', type=int, default=13, help='Number of joints [1,13]')
-parser.add_argument('--label', type=str, default=cfg['label'], help='String to label the training log',dest='label')
-parser.add_argument('--node_feature', type=str, default=cfg['node_feature'],
-                    help='Experimental setup [pos, pos_fit, pos_fit_lsg]', choices=['pos','pos_fit'])
-parser.add_argument('--hidden', type=str, default=cfg['hidden'],
+parser.add_argument('--data_fraction', 
+                    type=float, 
+                    default=cfg['data_fraction'], 
+                    help='Fraction of dataset to be used [0.01,0.1,1]')
+parser.add_argument('--dataset_split', 
+                    type=str, default=cfg['dataset_split'],
+                    help="[subject, dev]. Dev will use 'fraction' with value 0.01.", 
+                    choices=['subject','dev'])
+parser.add_argument('--learning_rate', 
+                    type=float, 
+                    default=cfg['learning_rate'], 
+                    help='Constant Learning rate [0.0001,0.001,0.01]')
+parser.add_argument('--epochs', 
+                    type=int, 
+                    default=cfg['epochs'], 
+                    help='Total epochs [1,10,20,50, 100]')
+parser.add_argument('--batch_size', 
+                    type=int, 
+                    default=cfg['batch_size'], 
+                    help='Batch size [1,8,32,256,1024]')
+parser.add_argument('--num_joints', 
+                    type=int, 
+                    default=13, 
+                    help='Number of joints [1,13]')
+parser.add_argument('--label', 
+                    type=str, 
+                    default=cfg['label'], 
+                    help='String to label the training log',
+                    dest='label')
+parser.add_argument('--node_feature', 
+                    type=str, 
+                    default=cfg['node_feature'],
+                    help='Experimental setup [pos, pos_fit, pos_fit_lsg]', 
+                    choices=['pos','pos_fit'])
+parser.add_argument('--hidden', 
+                    type=str, 
+                    default=cfg['hidden'],
                     help='Number of channels in each layer, for at least 1 and at most 10 hidden layers')
-parser.add_argument('--connectivity', type=int, default=cfg['connectivity'], choices=[10, 12, 15, 20, 30],
+parser.add_argument('--connectivity', 
+                    type=int, 
+                    default=cfg['connectivity'], 
+                    choices=[10, 12, 15, 20, 30],
                     help='Added connection for pixel values [10, 12, 15, 20, 30]. Default = 15')
-parser.add_argument('--node_loss_weight', type=float, default=cfg['node_loss_weight'],
+parser.add_argument('--node_loss_weight', 
+                    type=float, 
+                    default=cfg['node_loss_weight'],
                     help='Node_loss_weight')
-parser.add_argument('--target_loss_weight', type=float, default=cfg['target_loss_weight'],
+parser.add_argument('--target_loss_weight', 
+                    type=float, 
+                    default=cfg['target_loss_weight'],
                     help='Target_loss_weight')
-parser.add_argument('--task', type=str, default=cfg['task'], choices=["center", "head", "all", "right_hand", "hands"],
+parser.add_argument('--task', 
+                    type=str, default=cfg['task'], 
+                    choices=["center", "head", "all", "right_hand", "hands"],
                     help='Task setup; [center, head, all, right_hand, hands]')
-parser.add_argument('--dev', help='Use dev mode. dataset_split, epochs, batch_size and label will be overwritten.',
-                    action='store_true', default=cfg['dev'], required=False)
-parser.add_argument('--resume', type=str, help='Resume training from checkpoint PATH provided. '
-                    'All relevant command line inputs are overwritten',  default=cfg['resume'], required=False)
-parser.add_argument('--ckpt', help='Start training from checkpoint PATH provided.', default=cfg['ckpt'], required=False,
+parser.add_argument('--dev', 
+                    help='Use dev mode. dataset_split, epochs, batch_size and label will be overwritten.',
+                    action='store_true', 
+                    default=cfg['dev'],
+                    required=False)
+parser.add_argument('--resume', 
+                    type=str, 
+                    help='Resume training from checkpoint PATH provided. '
+                    'All relevant command line inputs are overwritten',  
+                    default=cfg['resume'], 
+                    required=False)
+parser.add_argument('--ckpt', 
+                    help='Start training from checkpoint PATH provided.', 
+                    default=cfg['ckpt'], 
+                    required=False,
                     type=str)
-parser.add_argument('--data_path', help='Path to the dataset with the "raw" folder.', default=cfg['data_path'],
-                    required=False, type=str)
-parser.add_argument('--data_path_dev', help='Path to the dataset with the "raw" folder for dev mode.',
-                    default=cfg['data_path_dev'], required=False, type=str)
-parser.add_argument('--arch', help='Network to use. [single_weight(default), two_weights, gat]', default=cfg['arch'],
-                    required=False, type=str, choices=["single_weight(default)", "two_weights", "gat"])
-parser.add_argument('--dataset', help='Dataset to use. [h36m(default), dhp19]', default=cfg['dataset'],
-                    choices=['h36m', 'dhp19'], required=False, type=str)
+parser.add_argument('--data_path', 
+                    help='Path to the dataset with the "raw" folder.', 
+                    default=cfg['data_path'],
+                    required=False, 
+                    type=str)
+parser.add_argument('--data_path_dev', 
+                    help='Path to the dataset with the "raw" folder for dev mode.',
+                    default=cfg['data_path_dev'], 
+                    required=False, 
+                    type=str)
+parser.add_argument('--arch', 
+                    help='Network to use. [single_weight(default), two_weights, gat]', 
+                    default=cfg['arch'],
+                    required=False, 
+                    type=str, 
+                    choices=["single_weight(default)", "two_weights", "gat"])
+parser.add_argument('--dataset', 
+                    help='Dataset to use. [h36m(default), dhp19]', 
+                    default=cfg['dataset'],
+                    choices=['h36m', 'dhp19'], 
+                    required=False, 
+                    type=str)
 
 args = parser.parse_args()
 
@@ -165,15 +224,31 @@ print('Dataloaders created')
 
 if cfg['ckpt'] == None:
     if args.arch == None or args.arch == 'single_weight':
-        model = hpegnn.hpeGnn_splineConv_single_weight(dataset.num_features, cfg['hidden'], num_joints, learning_rate=cfg['learning_rate'],
-                                    batch_size=cfg['batch_size'], data_fraction=cfg['data_fraction'], label=cfg['label'],
-                                    task=cfg['task'], transforms=transforms_namelist, node_loss_weight=[cfg['target_loss_weight'], cfg['node_loss_weight']],
-                                    exp_setup=exp_setup, pck_multiplier=0.6)
+        model = hpegnn.hpeGnn_splineConv_single_weight(dataset.num_features, 
+                                                       cfg['hidden'], 
+                                                       num_joints, 
+                                                       learning_rate=cfg['learning_rate'],
+                                                       batch_size=cfg['batch_size'], 
+                                                       data_fraction=cfg['data_fraction'], 
+                                                       label=cfg['label'],
+                                                       task=cfg['task'], 
+                                                       transforms=transforms_namelist, 
+                                                       node_loss_weight=[cfg['target_loss_weight'], cfg['node_loss_weight']],
+                                                       exp_setup=exp_setup,
+                                                       pck_multiplier=0.6)
     elif args.arch == 'two_weights':
-        model = hpegnn.hpeGnn_splineConv(dataset.num_features, cfg['hidden'], num_joints, learning_rate=cfg['learning_rate'],
-                                    batch_size=cfg['batch_size'], data_fraction=cfg['data_fraction'], label=cfg['label'],
-                                    task=cfg['task'], transforms=transforms_namelist, node_loss_weight=[cfg['target_loss_weight'], cfg['node_loss_weight']],
-                                    exp_setup=exp_setup, pck_multiplier=0.6)
+        model = hpegnn.hpeGnn_splineConv(dataset.num_features, 
+                                         cfg['hidden'], 
+                                         num_joints, 
+                                         learning_rate=cfg['learning_rate'],
+                                         batch_size=cfg['batch_size'], 
+                                         data_fraction=cfg['data_fraction'], 
+                                         label=cfg['label'],
+                                         task=cfg['task'], 
+                                         transforms=transforms_namelist, 
+                                         node_loss_weight=[cfg['target_loss_weight'], cfg['node_loss_weight']],
+                                         exp_setup=exp_setup, 
+                                         pck_multiplier=0.6)
 else:
     if args.arch == None or args.arch == 'single_weight':
         model = hpegnn.hpeGnn_splineConv_single_weight.load_from_checkpoint(cfg['ckpt'], learning_rate=cfg['learning_rate'],

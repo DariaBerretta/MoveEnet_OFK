@@ -21,10 +21,10 @@ import cv2
 
 from torch.nn.functional import elu
 from torch_geometric.nn.conv import SplineConv
-from utils.model_utils import GraphVisualization
-from utils.metrics import pck_error, mpjpe_error
-import utils.eval_utils as eval
-import data.h36m_utils as h36m
+from graph_enet.hpe_gnn.utils.model_utils import GraphVisualization
+from graph_enet.hpe_gnn.utils.metrics import pck_error, mpjpe_error
+import graph_enet.hpe_gnn.utils.eval_utils as eval
+import graph_enet.hpe_gnn.data.h36m_utils as h36m
 
 
 class hpegnn(pl.LightningModule):
@@ -690,6 +690,8 @@ class hpeGnn_splineConv_single_weight(hpegnn):
             loss = node_loss + target_loss
         pck = pck_error(y, out, data.th_pck, self.pck_multiplier)
         mpjpe = mpjpe_error(y, out)
+        # pck = pck_error(out, y, data.th_pck, self.pck_multiplier)
+        # mpjpe = mpjpe_error(out, y)
         return loss, pck, mpjpe
 
     def forward(self, x_in, edge_index, edge_attr=None, pos=None, batch=None):

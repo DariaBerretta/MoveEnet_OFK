@@ -9,6 +9,7 @@ from graph_enet.data.graph_builder import build_scarf_graph
 from graph_enet.pyScarf.utils.slt_ppr_filter import SpatialFilter
 
 
+
 class scarfDataset(Dataset):
     def __init__(self, root, transform=None, pre_transform=None, pre_filter=None,
                  rf_size = 14, 
@@ -70,100 +71,78 @@ class scarfDataset(Dataset):
 
         # === load events data from log file ===
         event_path, sklt_path = self.read_raw_paths(self.raw_paths)
-        efolder_path = os.path.dirname(event_path[0])
-        sfolder_path = os.path.dirname(sklt_path[0])
 
-        file_name = os.path.basename(event_path[0])
-
-        events = load_events_from_log(efolder_path, file_name)
-
-        # === load skeleton data from log file ===
-        sklt_data = load_skeleton_from_log(sfolder_path, file_name)
-    
-        # === Init SCARF object ===
-        scarf = SCARF(self.res, self.rf_size, self.alpha, self.C)
-        N = len(events)
-
-        # === Init Slt&Ppr filter ===
-        filter = SpatialFilter()
-        filter.initialise(self.res[1], self.res[0], period=0.1, spatial_range=1)
-
-        # === Main loop over batches of events ===
-        sklt_idx = 0
-        #timer = 0.0
-        #idx = 0
-        graph_idx = 0
-
-        for ev in events:
-        # Check if we have processed all skeletons
-            if sklt_idx >= len(sklt_data['ts']):
-                print("All skeletons have been processed.")
-                break
-
-            # Get the timestamp of the current skeleton frame
-            current_sklt_ts = sklt_data['ts'][sklt_idx]
-
-            # If the event occurred after the current skeleton timestamp,
-            # it means we have collected all events for that skeleton's time window.
-            if ev['ts'] > current_sklt_ts:
-                # Create a graph for the current skeleton frame
-
-                # Get the corresponding skeleton data
-                current_skeleton = sklt_data['keypoints'][sklt_idx]
-
-                graph = build_scarf_graph(scarf, current_skeleton)
-
-                if graph is None:
-                    print(f"[INFO] Skipping skeleton at time {current_sklt_ts}s: Not enough active RFs.")
-                    sklt_idx += 1
-                    continue  # Skip this iteration
-
-               # === saving the graph in the processed folder ===
-                torch.save(graph, osp.join(self.processed_dir, f'data_{graph_idx}.pt'))
-                graph_idx += 1
-
-                # Move to the next skeleton frame
-                sklt_idx += 1
-
-            # Update the SCARF representation with the current event
-            if filter.check(ev['x'], ev['y'], ev['pol'], ev['ts']):
-                    scarf.update(ev['x'], ev['y'], ev['pol'])
-
-        # while timer < events['ts'][-1]:
-
-        #     start_idx = idx
-
-        #     # === load a batch ===
-        #     while idx < N and events['ts'][idx] <= timer:
-        #         idx += 1
+        for i in range(len(event_path)):
+            print(f"[INFO] Processing file {i+1}/{len(event_path)}: {event_path[i]}")
             
-        #     batch = events[start_idx:idx]
+            # Ensure we have both event and skeleton paths
+            if not event_path or not sklt_path:
+                raise ValueError("No valid event or skeleton paths found in the raw data.")
+            efolder_path = os.path.dirname(event_path[i])
+            sfolder_path = os.path.dirname(sklt_path[i])
 
-        #     # === Update scarf ===
-        #     for ev in batch:
-        #         # === Salt and Pepper noise removal ===
-        #         if filter.check(ev['x'], ev['y'], ev['pol'], ev['ts']):
-        #             scarf.update(ev['x'], ev['y'], ev['pol'])
+            file_name = os.path.basename(event_path[i])
 
-        #     # === create graph ===
-        #     graph = build_scarf_graph(scarf)
+            events = load_events_from_log(efolder_path, file_name)
 
-        #     if graph is None:
-        #         print(f"[INFO] Skipping frame at time {timer:.2f}s: Not enough active RFs.")
-        #         timer += self.dt
-        #         continue  # Skip this iteration
-            
-        #     # === saving the graph in the processed folder ===
-        #     torch.save(graph, osp.join(self.processed_dir, f'data_{graph_idx}.pt'))
-        #     graph_idx += 1
-
-        #     # === Update for the next batch ===
-        #     timer += self.dt
+            # === load skeleton data from log file ===
+            sklt_data = load_skeleton_from_log(sfolder_path, file_name)
         
+            # === Init SCARF object ===
+            scarf = SCARF(self.res, self.rf_size, self.alpha, self.C)
+            N = len(events)
+
+            # === Init Slt&Ppr filter ===
+            filter = SpatialFilter()
+            filter.initialise(self.res[1], self.res[0], period=0.1, spatial_range=1)
+
+            # === Main loop over batches of events ===
+            sklt_idx = 0
+            #timer = 0.0
+            #idx = 0
+            graph_idx = 0
+
+            for ev in events:
+            # Check if we have processed all skeletons
+                if sklt_idx >= len(sklt_data['ts']):
+                    print("All skeletons have been processed.")
+                    break
+
+                # Get the timestamp of the current skeleton frame
+                current_sklt_ts = sklt_data['ts'][sklt_idx]
+
+                # If the event occurred after the current skeleton timestamp,
+                # it means we have collected all events for that skeleton's time window.
+                if ev['ts'] > current_sklt_ts:
+                    # Create a graph for the current skeleton frame
+
+                    # Get the corresponding skeleton data
+                    current_skeleton = sklt_data['keypoints'][sklt_idx]
+
+                    graph = build_scarf_graph(scarf, current_skeleton)
+
+                    if graph is None:
+                        print(f"[INFO] Skipping skeleton at time {current_sklt_ts}s: Not enough active RFs.")
+                        sklt_idx += 1
+                        continue  # Skip this iteration
+
+                # === saving the graph in the processed folder ===
+                    # Extract from event_path the folder name between 'raw/' and 'data.log'
+                    folder_name = os.path.basename(os.path.dirname(os.path.dirname(event_path[i])))
+                    graph_path = osp.join(self.processed_dir, f"{folder_name}_data_{graph_idx}.pt")
+                    torch.save(graph, graph_path)
+                    graph_idx += 1
+
+                    # Move to the next skeleton frame
+                    sklt_idx += 1
+
+                # Update the SCARF representation with the current event
+                if filter.check(ev['x'], ev['y'], ev['pol'], ev['ts']):
+                        scarf.update(ev['x'], ev['y'], ev['pol'])
 
     def len(self):
-        return len([f for f in os.listdir(self.processed_dir) if f.endswith('.pt')])
+        return len([f for f in os.listdir(self.processed_dir) if f.startswith('ch0dvs_') and f.endswith('.pt')])
 
     def get(self, idx):
-        path = osp.join(self.processed_dir, f'data_{idx}.pt')
+        path = osp.join(self.processed_dir, f'ch0dvs_data_{idx}.pt')
         return torch.load(path)

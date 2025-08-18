@@ -10,3 +10,5 @@ dist/
 build/
 *.log
 *.github
+lightning_logs
+run_time/

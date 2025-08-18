@@ -17,8 +17,8 @@ from torch_geometric.data.data import BaseData
 import math
 import copy
 
-import data.h36m_utils as h36m
-import utils.eval_utils as eval
+import graph_enet.hpe_gnn.data.h36m_utils as h36m
+import graph_enet.hpe_gnn.utils.eval_utils as eval
 
 IndexType = Union[slice, Tensor, np.ndarray, Sequence]
 
