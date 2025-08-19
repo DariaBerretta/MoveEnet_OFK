@@ -189,9 +189,18 @@ if cfg['dev']:
 cfg['hidden'] = [int(x) for x in cfg['hidden'].split(',')]
 num_joints = args.num_joints
 exp_setup = {
+    'connectivity': cfg['connectivity'],
     'node_feature': cfg['node_feature'],
     'arch': cfg['arch'],
-    'dataset': cfg['dataset']}
+    'dataset': cfg['dataset'],
+    'task': cfg['task'],
+    'num_joints': num_joints,
+    'hidden': cfg['hidden'],
+    'data_fraction': cfg['data_fraction'],
+    'batch_size': cfg['batch_size'],
+    'learning_rate': cfg['learning_rate'],
+    'dataset_split': cfg['dataset_split']
+    }
 print(f"Experimental setup: {exp_setup}")
 
 # Build tranfrorm pipeline

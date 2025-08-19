@@ -192,7 +192,17 @@ if cfg['dev']:
 cfg['hidden'] = list(map(int, cfg['hidden'].split(',')))
 task_to_num_joints = {'head': 1, 'center': 1, 'right_hand': 1, 'all': 13, 'hands': 2}
 num_joints = task_to_num_joints[cfg['task']]
-exp_setup = [cfg['connectivity'], cfg['node_feature'], args.arch]
+exp_setup = [cfg['connectivity'], 
+             cfg['node_feature'], 
+             args.arch, 
+             args.dataset, 
+             cfg['task'], 
+             num_joints,  
+             cfg['hidden'], 
+             cfg['data_fraction'],
+             cfg['batch_size'],
+             cfg['learning_rate'],
+             cfg['dataset_split']]
 print(exp_setup)
 
 transforms_current = [my_transforms.check_x_size]

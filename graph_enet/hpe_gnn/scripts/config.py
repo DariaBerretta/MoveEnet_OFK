@@ -24,7 +24,7 @@ cfg = {
     'epochs': 10,
     'optimizer': 'Adam',  # Adam  SGD
     # 'scheduler': 'MultiStepLR-70,100-0.1',  # default  SGDR-5-2  CVPR   step-4-0.8 MultiStepLR
-    'dataset_split': 'subject', #[subject, dev]. Dev will use 'fraction' ""with value 0.01."
+    'dataset_split': 'dev', #[subject, dev]. Dev will use 'fraction' ""with value 0.01."
     'data_fraction': 0.1, #'Fraction of dataset to be used [0.01,0.1,1]'
 
     ##### File paths
@@ -64,3 +64,39 @@ cfg_SCARF = {
     'ckpt': None,
     'resume': None #Resume training from checkpoint PATH provided.
 }
+
+
+#python graph_enet/test_scripts/test_scarf_train_splineConv.py \
+# --arch two_weights \
+# --label scarf_run \
+# --data_fraction 0.1 \
+# --dataset_split dev \
+# --epochs 10 \
+# --batch_size 1024 \
+# --learning_rate 0.001 \
+# --node_loss_weight 1.0 \
+# --target_loss_weight 1.0 \
+# --hidden "8,16,64,128,128,64,16,8" \
+# --dataset scarfDataset_splineConv \
+# --node_feature scarf_feature \
+# --connectivity 0 \
+# --data_path /home/dberretta-iit.local/data/new_scarfGNN \
+# --data_path_dev /home/dberretta-iit.local/data/new_scarfGNN
+
+
+# python graph_enet/hpe_gnn/main.py \
+# --arch two_weights \
+# --label scarf_run \
+# --data_fraction 0.1 \
+# --dataset_split dev \
+# --epochs 10 \
+# --batch_size 1024 \
+# --learning_rate 0.001 \
+# --node_loss_weight 1.0 \
+# --target_loss_weight 1.0 \
+# --hidden "8,16,64,128,128,64,16,8" \
+# --dataset h36m \
+# --node_feature pos \
+# --connectivity 0 \
+# --data_path /home/dberretta-iit.local/data/new_scarfGNN \
+# --data_path_dev /home/dberretta-iit.local/data/new_scarfGNN
