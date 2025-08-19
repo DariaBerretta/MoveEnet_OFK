@@ -11,11 +11,11 @@ cfg = {
     'dev': False,
     'task': 'all',  # Task setup; [center, head, all, right_hand, hands]
     'node_feature': 'pos', # Experimental setup [pos, pos_fit, pos_fit_lsg]
-    'arch': 'single_weight',
+    'arch': 'two_weights', # Architecture setup [single_weight, two_weights]
     'dataset': 'h36m',
 
     ##### Train Setting
-    'label': 'default',
+    'label': 'ledge_dataset', # Label for the experiment (ckpt name)
     'hidden': '8, 16, 64, 128, 128, 64, 16, 8',
 
     ##### Train Hyperparameters
@@ -42,11 +42,11 @@ cfg_SCARF = {
     'dev': False,
     'task': 'all',  # Only HPE task supported
     'node_feature': 'scarf_feature', # Scarf_splineConv always have 10 node features
-    'arch': 'single_weight',
+    'arch': 'two_weights', # Architecture setup [single_weight, two_weights]
     'dataset': 'scarfDataset_splineConv',
 
     ##### Train Setting
-    'label': 'default',
+    'label': 'scarf_dataset',     # Label for the experiment (ckpt name)
     'hidden': '8, 16, 64, 128, 128, 64, 16, 8',
 
     ##### Train Hyperparameters

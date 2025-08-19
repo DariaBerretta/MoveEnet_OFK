@@ -65,6 +65,7 @@ parser.add_argument('--num_joints',
                     help='Number of joints [1,13]')
 parser.add_argument('--label', 
                     type=str, 
+                    default=cfg_SCARF['label'],
                     help='String to label the training log',
                     dest='label')
 parser.add_argument('--node_feature', 
@@ -281,10 +282,10 @@ else:
                                         check_finite=True)
     trainer = pl.Trainer(max_epochs=cfg['epochs'], check_val_every_n_epoch=3, callbacks=[MyProgressBar(),
                          early_stop_callback], logger=logger, min_epochs=int(cfg['epochs']/2))
-    # # #Create directories if they do not exist and store cfg hyperparams
-    # # os.makedirs(logger.log_dir, exist_ok=True)
-    # # with open(os.path.join(logger.log_dir,'cfg.json'), 'w') as fp:
-    # #     json.dump(cfg, fp)
+    #Create directories if they do not exist and store cfg hyperparams
+    os.makedirs(logger.log_dir, exist_ok=True)
+    with open(os.path.join(logger.log_dir,'cfg.json'), 'w') as fp:
+        json.dump(cfg, fp)
 
 print(f'[INFO] Trainer set up complete')
 trainer.fit(model=model, train_dataloaders=train_loader, val_dataloaders=val_loader, ckpt_path=cfg['resume'])
