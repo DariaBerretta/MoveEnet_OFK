@@ -12,3 +12,5 @@ build/
 *.github
 lightning_logs
 run_time/
+helper_files/
+prediction_results/

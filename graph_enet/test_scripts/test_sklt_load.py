@@ -7,8 +7,8 @@ from graph_enet.pyScarf.scarf.scarf_class import SCARF
 from graph_enet.utils.log_loader import load_events_from_log
 
 # Example path to skeleton data file
-sklt_fpath = "/home/dberretta-iit.local/data/cam2_S1_Discussion/ch0GT50Hzskeleton/"
-ev_fpath = "/home/dberretta-iit.local/data/cam2_S1_Discussion/ch0dvs/"
+sklt_fpath = "/home/dberretta-iit.local/data/new_scarfGNN/raw/cam2_S1_Directions/ch0GT50Hzskeleton/"
+ev_fpath = "/home/dberretta-iit.local/data/new_scarfGNN/raw/cam2_S1_Directions/ch0dvs/"
 
 # Load the skeleton data
 sklt_data = load_skeleton_from_log(sklt_fpath)

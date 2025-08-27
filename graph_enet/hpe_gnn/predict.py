@@ -17,20 +17,44 @@ from argparse import ArgumentParser
 
 # Predict arguments
 parser = ArgumentParser()
-parser.add_argument('--data_path', help='PATH to base folder to save prediction', default=None, required=False,
+parser.add_argument('--data_path', 
+                    help='PATH to base folder to save prediction', 
+                    default=None, 
+                    required=False,
                     type=str)
-parser.add_argument('--model_csv_name', help='name of your model to save in csv', default='GraphEnet.csv',
-                    required=False, type=str)
-parser.add_argument('--ckpt_path', help='Start prediction from checkpoint PATH .', default= None, required=False,
+parser.add_argument('--model_csv_name', 
+                    help='name of your model to save in csv', 
+                    default='GraphEnet.csv',
+                    required=False, 
                     type=str)
-parser.add_argument('--visualise', help='set type of visualisation ["pose", None]', default= 'pose', required=False,
-                    type=str, choices=['pose', None, 'vectors-head', 'vectors-handR'])
-parser.add_argument('--video_path', help='Set to a path to save a video', default=None,
-                    required=False, type=str)
-parser.add_argument('--dataset', help='Input Dataset ["dhp19", "h36m"(default)]', default= 'h36m', required=False,
-                    type=str, choices=['dhp19', 'h36m'])
-parser.add_argument('--arch', help='Network to use. [single_weight(default), two_weights, gat]', default='single_weight',
-                    required=False, type=str, choices=["single_weight(default)", "two_weights", "gat"])
+parser.add_argument('--ckpt_path', 
+                    help='Start prediction from checkpoint PATH .', 
+                    default= None, 
+                    required=False,
+                    type=str)
+parser.add_argument('--visualise', 
+                    help='set type of visualisation ["pose", None]', 
+                    default= 'pose', 
+                    required=False,
+                    type=str, 
+                    choices=['pose', None, 'vectors-head', 'vectors-handR'])
+parser.add_argument('--video_path', 
+                    help='Set to a path to save a video', 
+                    default=None,
+                    required=False, 
+                    type=str)
+parser.add_argument('--dataset', 
+                    help='Input Dataset ["dhp19", "h36m"(default)]', 
+                    default= 'h36m', 
+                    required=False,
+                    type=str, 
+                    choices=['dhp19', 'h36m'])
+parser.add_argument('--arch', 
+                    help='Network to use. [single_weight(default), two_weights, gat]', 
+                    default='single_weight',
+                    required=False, 
+                    type=str, 
+                    choices=["single_weight(default)", "two_weights", "gat"])
 
 args = parser.parse_args()
 
@@ -76,10 +100,14 @@ if 'transforms' not in hyperparams.keys() or hyperparams['transforms'] == None:
     hyperparams['transforms'] = chain_transforms(transforms)
 
 if args.dataset == 'h36m':
-    dataset = customDatasets.eh36m_spline_ledge(data_path, transform=hyperparams['transforms'], pre_filter=hpe_filter,
-                                      schema=schema_spline)
+    dataset = customDatasets.eh36m_spline_ledge(data_path, 
+                                                transform=hyperparams['transforms'], 
+                                                pre_filter=hpe_filter,
+                                                schema=schema_spline)
 elif args.dataset == 'dhp19':
-    dataset = customDatasets.dhp19_spline_ledge(data_path, transform=hyperparams['transforms'], pre_filter=hpe_filter,
+    dataset = customDatasets.dhp19_spline_ledge(data_path, 
+                                                transform=hyperparams['transforms'], 
+                                                pre_filter=hpe_filter,
                                                 schema=schema_spline)
 
 test_loader = DataLoader(dataset, batch_size=1, num_workers=2)
@@ -88,16 +116,28 @@ print('Dataloaders created')
 
 if args.arch == 'two_weights':
     model = hpegnn.hpeGnn_splineConv.load_from_checkpoint(ckpt_path, in_channels=hyperparams['in_channels'],
-                              hidden_channels=hyperparams["hidden_channels"], out_channels=hyperparams['out_channels'],
-                              learning_rate=hyperparams['learning_rate'], batch_size=1, visualise=visualise,
-                              write_csv=data_path, file_name_eval = model_csv_name, image_size=hyperparams['image_size'],
-                              node_loss_weight=hyperparams['node_loss_weight'], save_video=video_path)
+                              hidden_channels=hyperparams["hidden_channels"], 
+                              out_channels=hyperparams['out_channels'],
+                              learning_rate=hyperparams['learning_rate'], 
+                              batch_size=1, 
+                              visualise=visualise,
+                              write_csv=data_path, 
+                              file_name_eval = model_csv_name, 
+                              image_size=hyperparams['image_size'],
+                              node_loss_weight=hyperparams['node_loss_weight'], 
+                              save_video=video_path)
 elif args.arch == 'single_weight':
     model = hpegnn.hpeGnn_splineConv_single_weight.load_from_checkpoint(ckpt_path, in_channels=hyperparams['in_channels'],
-                              hidden_channels=hyperparams["hidden_channels"], out_channels=hyperparams['out_channels'],
-                              learning_rate=hyperparams['learning_rate'], batch_size=1, visualise=visualise,
-                              write_csv=data_path, file_name_eval = model_csv_name, image_size=hyperparams['image_size'],
-                              node_loss_weight=hyperparams['node_loss_weight'], save_video=video_path)
+                              hidden_channels=hyperparams["hidden_channels"], 
+                              out_channels=hyperparams['out_channels'],
+                              learning_rate=hyperparams['learning_rate'], 
+                              batch_size=1, 
+                              visualise=visualise,
+                              write_csv=data_path, 
+                              file_name_eval = model_csv_name, 
+                              image_size=hyperparams['image_size'],
+                              node_loss_weight=hyperparams['node_loss_weight'], 
+                              save_video=video_path)
 print('Model set up complete')
 print('Setting up trainer')
 

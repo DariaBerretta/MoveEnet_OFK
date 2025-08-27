@@ -5,13 +5,13 @@ https://github.com/fire717
 home = '/data'
 cfg = {
     ##### Global Setting
-    'connectivity': 0, #'Added connection for pixel values [12, 15, 20, 30]
-    'node_loss_weight': 1,
+    'connectivity': 15, #'Added connection for pixel values [12, 15, 20, 30]
+    'node_loss_weight': 0.001,
     'target_loss_weight': 1,
     'dev': False,
     'task': 'all',  # Task setup; [center, head, all, right_hand, hands]
     'node_feature': 'pos', # Experimental setup [pos, pos_fit, pos_fit_lsg]
-    'arch': 'two_weights', # Architecture setup [single_weight, two_weights]
+    'arch': 'single_weight', # Architecture setup [single_weight, two_weights]
     'dataset': 'h36m',
 
     ##### Train Setting
@@ -19,17 +19,17 @@ cfg = {
     'hidden': '8, 16, 64, 128, 128, 64, 16, 8',
 
     ##### Train Hyperparameters
-    'learning_rate': 0.001,  # 1.25e-4
-    'batch_size': 1024,
-    'epochs': 10,
+    'learning_rate': 0.01,  # 1.25e-4
+    'batch_size': 64,
+    'epochs': 50,
     'optimizer': 'Adam',  # Adam  SGD
     # 'scheduler': 'MultiStepLR-70,100-0.1',  # default  SGDR-5-2  CVPR   step-4-0.8 MultiStepLR
     'dataset_split': 'dev', #[subject, dev]. Dev will use 'fraction' ""with value 0.01."
-    'data_fraction': 0.1, #'Fraction of dataset to be used [0.01,0.1,1]'
+    'data_fraction': 0.5, #'Fraction of dataset to be used [0.01,0.1,1], when you have small dataset use higher fraction
 
     ##### File paths
-    'data_path': '/mnt/disk1/data/h36m/ledge/',
-    'data_path_dev':'/home/usr/data/h36m/ledge_toy',
+    'data_path': '/home/dberretta-iit.local/data/LEDGE_eh36m',
+    'data_path_dev':'/home/dberretta-iit.local/data/LEDGE_eh36m',
     'ckpt': None,
     'resume': None #Resume training from checkpoint PATH provided.
 }
@@ -50,13 +50,13 @@ cfg_SCARF = {
     'hidden': '8, 16, 64, 128, 128, 64, 16, 8',
 
     ##### Train Hyperparameters
-    'learning_rate': 0.001,  # 1.25e-4
-    'batch_size': 1024,
-    'epochs': 10,
+    'learning_rate': 0.01,  # 1.25e-4
+    'batch_size': 64,
+    'epochs': 50,
     'optimizer': 'Adam',  # Adam  SGD
     # 'scheduler': 'MultiStepLR-70,100-0.1',  # default  SGDR-5-2  CVPR   step-4-0.8 MultiStepLR
     'dataset_split': 'dev', #[subject, dev]. Dev will use 'fraction' ""with value 0.01."
-    'data_fraction': 0.1, #'Fraction of dataset to be used [0.01,0.1,1]'
+    'data_fraction': 0.8, #'Fraction of dataset to be used [0.01,0.1,1], when you have small dataset use higher fraction'
 
     ##### File paths
     'data_path': '/home/dberretta-iit.local/data/new_scarfGNN',

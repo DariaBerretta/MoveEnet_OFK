@@ -11,6 +11,12 @@ class CARF:
         self.i = 0      # Current index in the circular buffer. 
         self.img = img
         self.C = C
+        # Optimization: Pre-cast C to float32 to avoid repeated conversions
+        self.C_float = np.float32(C)
+        
+        # Optimization: Cache for active events to avoid repeated boolean indexing
+        self._active_cache = None
+        self._cache_valid = False
 
     def add(self, pnt):
         """
@@ -20,18 +26,25 @@ class CARF:
         self.i = (self.i + 1) % self.N
         old_u, old_v, old_p, old_a = self.points[self.i]
 
+        # Optimization: Use pre-cast float32 value
         if old_a:
-            self.img[old_v, old_u] -= self.C 
+            self.img[old_v, old_u] -= self.C_float
         if a:
-            self.img[v, u] += self.C
+            self.img[v, u] += self.C_float
 
         self.points[self.i] = pnt
+        # Invalidate cache when buffer is modified
+        self._cache_valid = False
 
     def get_active_events(self):
         """
-        Get from each RF (CARF) only the active events
+        Get from each RF (CARF) only the active events.
+        Optimization: Cache results to avoid repeated boolean indexing.
         """
-        return self.points[self.points[:, 3] == 1]     # return datatype 
+        if not self._cache_valid:
+            self._active_cache = self.points[self.points[:, 3] == 1]
+            self._cache_valid = True
+        return self._active_cache 
 
 
 
@@ -120,19 +133,27 @@ class SCARF:
     def get_active_RF(self, threshold_ratio: float = 0.15):
         """
         Return a list of (RF index, carf, active_events) for each RF that has more than (threshold_ratio * N) active events
+        Optimization: Compute threshold once and check length before expensive operations.
         """
         active_rfs = []
+        # Pre-compute threshold to avoid repeated multiplication
+        threshold = self.N * threshold_ratio
+        
         for idx, carf in enumerate(self.rfs):
             events = carf.get_active_events()
 
             #print(f"[INFO] Buffer dimension: {carf.N}")
             #print(f"[INFO] ratio of active events: {len(events)}/{len(carf.points)}")
 
+            # Optimization: Check length first (fastest operation)
+            if len(events) <= threshold:
+                continue
+                
+            # Optimization: Only check uniqueness if we have enough events
             # If all the active events are all in the same position the RF is discarded
             if np.unique(events[:, :2], axis=0).shape[0] == 1:
                continue
 
-            if len(events) > carf.N * threshold_ratio:
-                active_rfs.append((idx, carf, events))
+            active_rfs.append((idx, carf, events))
         return active_rfs
 

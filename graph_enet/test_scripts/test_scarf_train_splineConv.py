@@ -290,6 +290,3 @@ else:
 print(f'[INFO] Trainer set up complete')
 trainer.fit(model=model, train_dataloaders=train_loader, val_dataloaders=val_loader, ckpt_path=cfg['resume'])
 print(f'[INFO] Training complete')
-
-
-    

@@ -2,6 +2,7 @@
 from torch import abs, sum, float32, int64
 from torch_geometric.data.database import TensorInfo
 from graph_enet.hpe_gnn.data import h36m_utils as h36m
+from tqdm import tqdm
 
 def hpe_filter(sample):
     return check_sample_length(sample) & check_y_values_sample(sample)
@@ -43,6 +44,48 @@ def dataset_split(dataset, style= None, fraction = None, dataset_label = 'h36m')
             train_dataset = train_dataset[:int(len(train_dataset)*fraction)]
             val_dataset = val_dataset[:int(len(val_dataset)*fraction)]
     return train_dataset, val_dataset
+
+def new_dataset_split(dataset, style=None, fraction=None, dataset_label='dev'):
+    if style is None:
+        print('Dataset split unclear. Please define. Exiting.')
+        exit()
+    if fraction is None:
+        fraction = 1
+
+    if style == 'dev':
+        fraction = 0.1
+        dataset_size = len(dataset)
+        total_items = int(dataset_size * fraction)
+        
+        # 80/10/10 split
+        train_end = int(total_items * 0.8)
+        val_end = int(total_items * 0.9)
+        
+        print(f"Splitting dataset into {train_end}/{val_end-train_end}/{total_items-val_end} samples...")
+        
+         # Fast sequential slicing with progress tracking
+        with tqdm(total=3, desc="Dataset splitting", unit="splits") as pbar:
+            # Train split - much faster list comprehension
+            train_dataset = [dataset[i] for i in tqdm(range(train_end), 
+                                                   desc="Train split", 
+                                                   leave=False)]
+            pbar.update(1)
+            
+            # Val split
+            val_dataset = [dataset[i] for i in tqdm(range(train_end, val_end), 
+                                                   desc="Val split", 
+                                                   leave=False)]
+            pbar.update(1)
+            
+            # Test split
+            test_dataset = [dataset[i] for i in tqdm(range(val_end, total_items), 
+                                                    desc="Test split", 
+                                                    leave=False)]
+            pbar.update(1)
+
+        print(f"Dataset split complete: {len(train_dataset)}/{len(val_dataset)}/{len(test_dataset)} (train/val/test)")
+
+    return train_dataset, val_dataset, test_dataset
 
 def check_y_values(dataset):
     count = 0

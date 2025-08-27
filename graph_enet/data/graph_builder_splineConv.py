@@ -33,16 +33,18 @@ def build_scarf_graph_splineConv(
     - th_pck: torso dimension (distance between joints 2 and 9)
     """
     active_rfs = scarf.get_active_RF(active_ratio)
-    node_features=[]                # List of node features
+    
+    # Pre-allocate arrays for better performance
+    num_rfs = len(active_rfs)
+    node_features = np.zeros((num_rfs, 10), dtype=np.float32)
     
     # Determine the node features
-    for rf in active_rfs:
-        RF_index, _, events = rf
+    for i, rf in enumerate(active_rfs):
+        RF_idx, _, events = rf
 
-        # Means
-        x_mean = float(np.mean(events[:,0]))
-        y_mean = float(np.mean(events[:,1]))    
-        RF_idx = RF_index
+       # Compute means (vectorized)
+        events_xy = events[:, :2]
+        x_mean, y_mean = np.mean(events_xy, axis=0)
 
         # PCA
         pca = PCA(n_components=2)
@@ -53,7 +55,7 @@ def build_scarf_graph_splineConv(
 
         eccentricity = float(np.sqrt(1 - lambda_2/lambda_1))
 
-        feature = [
+        node_features[i]= [
             x_mean, y_mean, 
             RF_idx, 
             float(v1[0]), float(v1[1]), 
@@ -61,7 +63,6 @@ def build_scarf_graph_splineConv(
             float(lambda_1), float(lambda_2), 
             eccentricity
         ]
-        node_features.append(feature)
 
     
     if len(node_features) == 0:

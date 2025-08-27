@@ -10,7 +10,7 @@ from torch import Tensor
 from graph_enet.hpe_gnn.data import customDatasets
 import graph_enet.hpe_gnn.data.transforms as my_transforms
 from model import hpegnn
-from utils.dataset_utils import hpe_filter, dataset_split, schema_spline
+from utils.dataset_utils import hpe_filter, dataset_split, schema_spline, new_dataset_split
 from utils.library_utils import MyProgressBar
 import graph_enet.hpe_gnn.utils.training_utils as maps
 from utils.training_utils import test_ckpt_path
@@ -141,17 +141,19 @@ if cfg['dev']:
     # data_path = cfg['data_path_dev']
 
     # My data path
-    data_path = '/home/dberretta-iit.local/data/toy_gamer/'
+    # data_path = '/home/dberretta-iit.local/data/toy_gamer/'
     # data_path = '/home/dberretta-iit.local/data/new_scarfGNN/'
     # data_path = '/home/dberretta-iit.local/data/tast_gamer_GNN/'
+    data_path = '/home/dberretta-iit.local/data/LEDGE_eh36m/'
 else:
     # data_path = '/home/ggoyal/data/h36m_cropped/ledge/'
     # data_path = cfg['data_path']
 
     # My data path
-    data_path = '/home/dberretta-iit.local/data/toy_gamer/'
+    #data_path = '/home/dberretta-iit.local/data/toy_gamer/'
     # data_path = '/home/dberretta-iit.local/data/new_scarfGNN/'
     # data_path = '/home/dberretta-iit.local/data/tast_gamer_GNN/'
+    data_path = '/home/dberretta-iit.local/data/LEDGE_eh36m/'
 
 if not os.path.exists(data_path):
     print(data_path)
@@ -219,17 +221,20 @@ transforms_current = my_transforms.chain_transforms(transforms_current)
 
 
 # Dataset and dataloader setup
-# dataset = customDatasets.eh36m_spline_ledge(data_path, transform=transforms_current, pre_filter=hpe_filter, schema=schema_spline)
+dataset = customDatasets.eh36m_spline_ledge(data_path, transform=transforms_current, pre_filter=hpe_filter, schema=schema_spline)
 
-dataset = customDatasets.eh36m_spline_gamer(data_path,transform=transforms_current, pre_filter=hpe_filter, schema=schema_spline)
+# dataset = customDatasets.eh36m_spline_gamer(data_path,transform=transforms_current, pre_filter=hpe_filter, schema=schema_spline)
 
 # dataset = scarfDataset(data_path)
 
 dataset = dataset.shuffle()
 
-train_dataset, val_dataset = dataset_split(dataset, style=cfg['dataset_split'], fraction=cfg['data_fraction'], dataset_label = args.dataset)
+# train_dataset, val_dataset = dataset_split(dataset, style=cfg['dataset_split'], fraction=cfg['data_fraction'], dataset_label = args.dataset)
+
+train_dataset, val_dataset, test_dataset = new_dataset_split(dataset, style=cfg['dataset_split'], fraction=cfg['data_fraction'], dataset_label = args.dataset)
 train_loader = DataLoader(train_dataset, batch_size=cfg['batch_size'], shuffle=True, num_workers=2)
 val_loader = DataLoader(val_dataset, batch_size=cfg['batch_size'], num_workers=2)
+test_loader = DataLoader(test_dataset, batch_size=cfg['batch_size'], num_workers=2)
 print('Dataloaders created')
 
 if cfg['ckpt'] == None:
