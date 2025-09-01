@@ -144,7 +144,7 @@ if cfg['dev']:
     # data_path = '/home/dberretta-iit.local/data/toy_gamer/'
     # data_path = '/home/dberretta-iit.local/data/new_scarfGNN/'
     # data_path = '/home/dberretta-iit.local/data/tast_gamer_GNN/'
-    data_path = '/home/dberretta-iit.local/data/LEDGE_eh36m/'
+    data_path = args.data_path_dev
 else:
     # data_path = '/home/ggoyal/data/h36m_cropped/ledge/'
     # data_path = cfg['data_path']
@@ -153,7 +153,7 @@ else:
     #data_path = '/home/dberretta-iit.local/data/toy_gamer/'
     # data_path = '/home/dberretta-iit.local/data/new_scarfGNN/'
     # data_path = '/home/dberretta-iit.local/data/tast_gamer_GNN/'
-    data_path = '/home/dberretta-iit.local/data/LEDGE_eh36m/'
+    data_path = args.data_path
 
 if not os.path.exists(data_path):
     print(data_path)
@@ -232,9 +232,9 @@ dataset = dataset.shuffle()
 # train_dataset, val_dataset = dataset_split(dataset, style=cfg['dataset_split'], fraction=cfg['data_fraction'], dataset_label = args.dataset)
 
 train_dataset, val_dataset, test_dataset = new_dataset_split(dataset, style=cfg['dataset_split'], fraction=cfg['data_fraction'], dataset_label = args.dataset)
-train_loader = DataLoader(train_dataset, batch_size=cfg['batch_size'], shuffle=True, num_workers=2)
-val_loader = DataLoader(val_dataset, batch_size=cfg['batch_size'], num_workers=2)
-test_loader = DataLoader(test_dataset, batch_size=cfg['batch_size'], num_workers=2)
+train_loader = DataLoader(train_dataset, batch_size=cfg['batch_size'], shuffle=True, num_workers=4, pin_memory=True)
+val_loader = DataLoader(val_dataset, batch_size=cfg['batch_size'], num_workers=4, pin_memory=True)
+test_loader = DataLoader(test_dataset, batch_size=cfg['batch_size'], num_workers=4, pin_memory=True)
 print('Dataloaders created')
 
 if cfg['ckpt'] == None:
@@ -282,13 +282,34 @@ print('Model set up complete')
 
 # Training code
 if cfg['dev']:
-    trainer = pl.Trainer(fast_dev_run=5, enable_progress_bar=True)
+    trainer = pl.Trainer(
+        fast_dev_run=5, 
+        enable_progress_bar=True,  
+        accelerator='gpu', 
+        devices=1
+    )
 else:
-    logger = pl.loggers.TensorBoardLogger("lightning_logs", name=cfg['label'])
-    early_stop_callback = EarlyStopping(monitor="loss/val_epoch", min_delta=0.00, patience=5, verbose=False, mode="min",
-                                        check_finite=True)
-    trainer = pl.Trainer(max_epochs=cfg['epochs'], check_val_every_n_epoch=3, callbacks=[MyProgressBar(),
-                         early_stop_callback], logger=logger, min_epochs=int(cfg['epochs']/2))
+    logger = pl.loggers.TensorBoardLogger(
+        "lightning_logs", 
+        name=cfg['label']
+    )
+    early_stop_callback = EarlyStopping(
+        monitor="loss/val_epoch", 
+        min_delta=0.00, 
+        patience=5, verbose=False, 
+        mode="min",
+        check_finite=True
+    )
+    trainer = pl.Trainer(
+        max_epochs=cfg['epochs'], 
+        check_val_every_n_epoch=3, 
+        callbacks=[MyProgressBar(),
+        early_stop_callback], 
+        logger=logger, 
+        min_epochs=int(cfg['epochs']/2),
+        accelerator='gpu', 
+        devices=1
+    )
     #Create directories if they do not exist and store cfg hyperparams
     os.makedirs(logger.log_dir, exist_ok=True)
     with open(os.path.join(logger.log_dir,'cfg.json'), 'w') as fp:

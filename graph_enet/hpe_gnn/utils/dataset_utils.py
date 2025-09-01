@@ -53,7 +53,7 @@ def new_dataset_split(dataset, style=None, fraction=None, dataset_label='dev'):
         fraction = 1
 
     if style == 'dev':
-        fraction = 0.1
+        fraction = fraction
         dataset_size = len(dataset)
         total_items = int(dataset_size * fraction)
         

@@ -22,6 +22,7 @@ from graph_enet.hpe_gnn.model.hpegnn import hpeGnn_splineConv, hpeGnn_splineConv
 from graph_enet.hpe_gnn.utils.dataset_utils import new_dataset_split, dataset_split
 from graph_enet.hpe_gnn.utils.library_utils import MyProgressBar
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
+from graph_enet.hpe_gnn.scripts.config import cfg_SCARF as cfg
 
 import warnings
 warnings.filterwarnings("ignore", message=".*weights_only=False.*", category=FutureWarning)
@@ -193,33 +194,33 @@ def main():
     parser = argparse.ArgumentParser(description="Improved GraphEnet-v2 Training")
     parser.add_argument('--data_path',
                         type=str,
-                        default='/home/dberretta-iit.local/data/new_scarfGNN',
+                        default=cfg['data_path'],
                         help='Path to dataset')
     parser.add_argument('--arch', type=str, 
-                        default='two_weights',
+                        default=cfg['arch'],
                         choices=['single_weight', 'two_weights'],
                         help='Model architecture')
     parser.add_argument('--epochs', 
                         type=int, 
-                        default=50,
+                        default=cfg['epochs'],
                         help='Number of epochs')
     parser.add_argument('--batch_size', 
                         type=int, 
-                        default=64,
+                        default=cfg['batch_size'],
                         help='Batch size')
     parser.add_argument('--learning_rate', 
-                        type=float, default=0.01,
+                        type=float, default=cfg['learning_rate'],
                         help='Learning rate')
     parser.add_argument('--data_fraction', 
-                        type=float, default=0.8,
+                        type=float, default=cfg['data_fraction'],
                         help='Fraction of data to use')
     parser.add_argument('--node_loss_weight', 
                         type=float, 
-                        default=0.1,
+                        default=cfg['node_loss_weight'],
                         help='Node loss weight')
     parser.add_argument('--target_loss_weight',
                         type=float, 
-                        default=1.0,
+                        default=cfg['target_loss_weight'],
                         help='Target loss weight')
     parser.add_argument('--label', 
                         type=str, 

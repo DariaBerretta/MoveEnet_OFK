@@ -26,8 +26,8 @@ from torch_geometric.loader import DataLoader
 import warnings
 from datetime import datetime
 
-# Suppress warnings
-warnings.filterwarnings("ignore", message=".*weights_only=False.*", category=FutureWarning)
+# # Suppress warnings
+# warnings.filterwarnings("ignore", message=".*weights_only=False.*", category=FutureWarning)
 
 # Import fixed metrics first
 from graph_enet.test_scripts.fixed_metrics import pck_error, mpjpe_error
@@ -35,11 +35,12 @@ from graph_enet.test_scripts.fixed_metrics import pck_error, mpjpe_error
 import graph_enet.hpe_gnn.utils.metrics
 graph_enet.hpe_gnn.utils.metrics.pck_error = pck_error
 graph_enet.hpe_gnn.utils.metrics.mpjpe_error = mpjpe_error
+
 # These metrics are not working so i don't import them
 # from graph_enet.hpe_gnn.utils.metrics import pck_error, mpjpe_error
 
 from graph_enet.data.scarfDataset_splineConv import scarfDataset_splineConv
-from graph_enet.hpe_gnn.data.customDatasets import eh36m_spline_gamer
+from graph_enet.hpe_gnn.data.customDatasets import eh36m_spline_gamer, eh36m_spline_ledge
 from graph_enet.hpe_gnn.model.hpegnn import hpeGnn_splineConv, hpeGnn_splineConv_single_weight
 from graph_enet.hpe_gnn.utils.model_utils import GraphVisualization
 from graph_enet.hpe_gnn.utils.dataset_utils import new_dataset_split, dataset_split, hpe_filter, schema_spline
@@ -385,37 +386,55 @@ def detect_dataset_type(ckpt_path):
             data_path: corresponding data path
     """
     if 'ledge_dataset' in ckpt_path:
-        return 'ledge_dataset', '/home/dberretta-iit.local/data/toy_gamer/'
+        return 'ledge_dataset', '/home/dberretta-iit.local/data/LEDGE_eh36m_val'
     elif 'Improved_scarf_dataset' in ckpt_path:
-        return 'scarf_dataset', '/home/dberretta-iit.local/data/new_scarfGNN'
+        return 'scarf_dataset', '/home/dberretta-iit.local/data/new_scarfGNN_val'
     else:
         # Default to scarf_dataset if unclear
         print("Warning: Could not detect dataset type from checkpoint path. Defaulting to scarf_dataset.")
-        return 'scarf_dataset', '/home/dberretta-iit.local/data/new_scarfGNN'
+        return 'scarf_dataset', '/home/dberretta-iit.local/data/new_scarfGNN_val'
 
 
 def main():
     parser = argparse.ArgumentParser(description="Extract predictions and visualize results")
     
-    parser.add_argument('--ckpt_path', type=str, required=True,
-                        help='Path to the model checkpoint')
-    parser.add_argument('--data_path', type=str, default=None,
-                        help='Path to the dataset (auto-detected if not provided)')
-    
-    parser.add_argument('--arch', type=str, default='two_weights', 
+    parser.add_argument('--ckpt_path', 
+                        type=str, 
+                        required=True,
+                        help='Path to the model checkpoint'
+                        )
+    parser.add_argument('--data_path', 
+                        type=str, 
+                        default=None,
+                        help='Path to the dataset (auto-detected if not provided)')   
+    parser.add_argument('--arch', 
+                        type=str, 
+                        default='single_weight', 
                         choices=['single_weight', 'two_weights'],
                         help='Model architecture')
-    parser.add_argument('--batch_size', type=int, default=32,
+    parser.add_argument('--batch_size', 
+                        type=int, 
+                        default=256,
                         help='Batch size for inference')
-    parser.add_argument('--num_samples', type=int, default=20,
+    parser.add_argument('--num_samples', 
+                        type=int, 
+                        default=20,
                         help='Maximum number of samples to process')
-    parser.add_argument('--num_visualizations', type=int, default=20,
+    parser.add_argument('--num_visualizations', 
+                        type=int, 
+                        default=20,
                         help='Number of visualizations to create')
-    parser.add_argument('--save_dir', type=str, default='./prediction_results',
+    parser.add_argument('--save_dir', 
+                        type=str, 
+                        default='./prediction_results',
                         help='Directory to save results')
-    parser.add_argument('--data_fraction', type=float, default=0.5,
+    parser.add_argument('--data_fraction', 
+                        type=float, 
+                        default=0.8,
                         help='Fraction of dataset to use for testing')
-    parser.add_argument('--device', type=str, default='cuda' if torch.cuda.is_available() else 'cpu',
+    parser.add_argument('--device', 
+                        type=str, 
+                        default='cuda' if torch.cuda.is_available() else 'cpu',
                         choices=['cpu', 'cuda'],
                         help='Device for inference')
     
@@ -447,7 +466,7 @@ def main():
     
     if dataset_type == 'scarf_dataset':
         # Use scarfDataset_splineConv for Improved_scarf_dataset checkpoints
-        dataset = scarfDataset_splineConv(
+        val_dataset = scarfDataset_splineConv(
             data_path,
             transform=None,
             pre_transform=None, 
@@ -471,23 +490,34 @@ def main():
 
         transforms_current = my_transforms.chain_transforms(transforms_current)
 
-        dataset = eh36m_spline_gamer(
-            data_path,
+        # dataset = eh36m_spline_gamer(
+        #     data_path,
+        #     transform=transforms_current, 
+        #     pre_filter=hpe_filter, 
+        #     schema=schema_spline
+        # )
+        # dataset_label = 'eh36m_spline_gamer'
+
+        val_dataset = eh36m_spline_ledge(
+            data_path, 
             transform=transforms_current, 
             pre_filter=hpe_filter, 
             schema=schema_spline
         )
-        dataset_label = 'eh36m_spline_gamer'
-    
-    dataset = dataset.shuffle()
+        dataset_label = 'eh36m_spline_ledge'
+
+    #put a seed for reproducibility
+    val_dataset = val_dataset.shuffle()
+
+    print(f'dataset length: {len(val_dataset)} samples')
     
     # Split dataset (we'll use validation split for testing)
-    train_dataset, val_dataset, _= new_dataset_split(
-        dataset,
-        style='dev', 
-        fraction=args.data_fraction, 
-        dataset_label=dataset_label
-    )
+    # train_dataset, val_dataset, _= new_dataset_split(
+    #     dataset,
+    #     style='dev', 
+    #     fraction=args.data_fraction, 
+    #     dataset_label=dataset_label
+    # )
     
     # Create dataloader for test data
     test_loader = DataLoader(
