@@ -29,8 +29,8 @@ cfg = {
     'data_fraction': 1, #'Fraction of dataset to be used [0.01,0.1,1], when you have small dataset use higher fraction
 
     ##### File paths
-    'data_path': '/home/dberretta-iit.local/data/LEDGE_eh36m_train',
-    'data_path_dev':'/home/dberretta-iit.local/data/LEDGE_eh36m_train',
+    'data_path': '/home/dberretta-iit.local/data/LEDGE_datasets/h36m',
+    'data_path_dev':'/home/dberretta-iit.local/data/LEDGE_datasets/h36m',
     'ckpt': None,
     'resume': None #Resume training from checkpoint PATH provided.
 }

@@ -6,8 +6,6 @@ import torch
 import torch_geometric
 import cv2
 
-import sys
-sys.path.append("/home/dberretta-iit.local/Documents/Repos/hpe-core/")
 from pycore.moveenet.visualization import visualization
 
 
