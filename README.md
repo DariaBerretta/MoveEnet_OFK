@@ -20,8 +20,21 @@ tag = "cpu" if not cuda else "cu"+re.sub(r"\.","",cuda)[:3]
 print("CUDA_TAG", tag)
 PY
 ```
+Replace `TORCH_X.Y.Z` and `CUDA_TAG` with the output of the above command
 ```bash
 # 2) Install SplineConv
 python -m pip install -U \
   torch-spline-conv \
   -f https://data.pyg.org/whl/torch-${TORCH_X.Y.Z}+${CUDA_TAG}.html
+
+3. **How to install PyG binary wheels**: To install the PyTorch Geometric (PyG) binary wheels, you can use the following command:
+
+```bash
+# in the 'graphenet' venv
+python -c "import torch, re; print(torch.__version__, getattr(torch.version,'cuda',None))"
+
+# GPU build (you printed cu128 earlier)
+pip install --no-build-isolation \
+  torch-scatter torch-sparse torch-cluster \
+  -f https://data.pyg.org/whl/torch-2.8.0+cu128.html
+```

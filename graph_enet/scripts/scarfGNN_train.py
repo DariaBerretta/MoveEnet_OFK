@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+from logging import config
 import os
 import json
 import argparse
@@ -27,25 +28,6 @@ from graph_enet.hpe_gnn.scripts.config import cfg_SCARF as cfg
 import warnings
 warnings.filterwarnings("ignore", message=".*weights_only=False.*", category=FutureWarning)
 
-def create_improved_config():
-    """Create improved training configuration."""
-    return {
-        'data_path': '/home/dberretta-iit.local/data/new_scarfGNN',
-        'arch': 'single_weight',  # More stable than two_weights
-        'epochs': 50,  # Increased from 10
-        'batch_size': 64,  # Reduced from 1024
-        'learning_rate': 0.01,  # Increased from 0.001
-        'data_fraction': 0.8,  # Increased from 0.1
-        'dataset_split': 'dev',
-        'hidden': [32, 64, 128, 64, 32],  # Simpler architecture
-        'node_loss_weight': 0.1,  # Reduced node loss weight
-        'target_loss_weight': 1.0,  # Keep target loss high
-        'label': 'improved_training',
-        'patience': 15,  # Increased patience for early stopping
-        'dev': False,
-        'resume': None
-    }
-
 def setup_training(cfg):
     """Setup dataset, model, and trainer."""
     
@@ -62,7 +44,6 @@ def setup_training(cfg):
         raise FileNotFoundError(f"Data path not found: {cfg['data_path']}")
     
     # Load dataset
-    print("Loading dataset...")
     dataset = scarfDataset_splineConv(
         cfg['data_path'],
         transform=None,
@@ -82,7 +63,7 @@ def setup_training(cfg):
         dataset,
         style=cfg['dataset_split'], 
         fraction=cfg['data_fraction'], 
-        dataset_label='scarfDataset_splineConv'
+        dataset_label=cfg['dataset']
     )
 
     # train_dataset, val_dataset = dataset_split(
@@ -125,7 +106,7 @@ def setup_training(cfg):
             batch_size=cfg['batch_size'], 
             data_fraction=cfg['data_fraction'], 
             label=cfg['label'],
-            task='all', 
+            task=cfg['task'], 
             transforms=None, 
             node_loss_weight=[cfg['target_loss_weight'], cfg['node_loss_weight']],
             pck_multiplier=0.6
@@ -191,7 +172,7 @@ def setup_training(cfg):
 def main():
     """Main training function."""
     
-    parser = argparse.ArgumentParser(description="Improved GraphEnet-v2 Training")
+    parser = argparse.ArgumentParser()
     parser.add_argument('--data_path',
                         type=str,
                         default=cfg['data_path'],
@@ -212,7 +193,8 @@ def main():
                         type=float, default=cfg['learning_rate'],
                         help='Learning rate')
     parser.add_argument('--data_fraction', 
-                        type=float, default=cfg['data_fraction'],
+                        type=float, 
+                        default=cfg['data_fraction'],
                         help='Fraction of data to use')
     parser.add_argument('--node_loss_weight', 
                         type=float, 
@@ -224,8 +206,12 @@ def main():
                         help='Target loss weight')
     parser.add_argument('--label', 
                         type=str, 
-                        default='Improved_scarf_dataset',
+                        default=cfg['label'],
                         help='Experiment label')
+    parser.add_argument('--hidden', 
+                        type=str, 
+                        default=cfg['hidden'],
+                        help='Comma-separated hidden layer sizes')
     parser.add_argument('--patience', 
                         type=int, 
                         default=10,
@@ -240,9 +226,10 @@ def main():
                         help='Resume from checkpoint')
     
     args = parser.parse_args()
-    
+
+
     # Create config from args
-    cfg = {
+    config= {
         'data_path': args.data_path,
         'arch': args.arch,
         'epochs': args.epochs,
@@ -250,7 +237,7 @@ def main():
         'learning_rate': args.learning_rate,
         'data_fraction': args.data_fraction,
         'dataset_split': 'dev',
-        'hidden': [32, 64, 128, 64, 32],  # Fixed improved architecture
+        'hidden': [int(x) for x in args.hidden.split(',')],
         'node_loss_weight': args.node_loss_weight,
         'target_loss_weight': args.target_loss_weight,
         'label': args.label,
@@ -258,6 +245,7 @@ def main():
         'dev': args.dev,
         'resume': args.resume
     }
+    cfg.update(config)
     
     try:
         # Setup training

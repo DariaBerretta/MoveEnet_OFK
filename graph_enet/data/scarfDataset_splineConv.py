@@ -9,7 +9,7 @@ from graph_enet.utils.log_loader import load_events_from_log, load_skeleton_from
 from graph_enet.data.graph_builder_splineConv import build_scarf_graph_splineConv
 from graph_enet.pyScarf.utils.slt_ppr_filter import SpatialFilter
 import numpy as np
-
+import re
 
 class scarfDataset_splineConv(Dataset):
     def __init__(self, root, transform=None, pre_transform=None, pre_filter=None,
@@ -38,22 +38,77 @@ class scarfDataset_splineConv(Dataset):
 
         return file_names
     
-    def read_raw_paths(self, raw_paths):
+    # def read_raw_paths(self, raw_paths):
+    #     """
+    #     Splits the raw_paths list into two lists:
+    #     - event_paths: all paths containing '/ch0dvs/data.log'
+    #     - skltn_paths: all paths containing '/ch0GT50Hzskeleton/data.log'
+    #     """
+    #     event_paths = []
+    #     skltn_paths = []
+
+    #     for path in raw_paths:
+    #         if '/ch0dvs/data.log' in path:
+    #             event_paths.append(path)
+    #         elif '/ch0GT50Hzskeleton/data.log' in path:
+    #             skltn_paths.append(path)
+
+    #     return event_paths, skltn_paths
+
+
+    def read_raw_paths(self, raw_paths, subject_ids=None):
         """
-        Splits the raw_paths list into two lists:
-        - event_paths: all paths containing '/ch0dvs/data.log'
-        - skltn_paths: all paths containing '/ch0GT50Hzskeleton/data.log'
+        Return (event_paths, skltn_paths) from raw_paths.
+        Only accepts paths like:
+        .../cam{cam}_S{subject}_{action}[_{take}]/(ch0dvs|ch0GT50Hzskeleton)/data.log
+
+        subject_ids: None (no filter), an int, or an iterable of ints.
         """
-        event_paths = []
-        skltn_paths = []
+        # Normalize allowed subjects
+        if subject_ids is None:
+            allowed = None
+        elif isinstance(subject_ids, int):
+            allowed = {subject_ids}
+        else:
+            allowed = {int(s) for s in subject_ids}
+
+        event_paths, skltn_paths = [], []
 
         for path in raw_paths:
-            if '/ch0dvs/data.log' in path:
+            s = path.replace('\\', '/')
+
+            # Keep only the two target files
+            if not s.endswith('/data.log'):
+                continue
+            is_event = '/ch0dvs/' in s
+            is_skel  = '/ch0GT50Hzskeleton/' in s
+            if not (is_event or is_skel):
+                continue
+
+            # Clip folder is two levels up: .../<clip>/<stream>/data.log
+            parts = s.strip('/').split('/')
+            if len(parts) < 3:
+                continue
+            clip = parts[-3]  # e.g. cam2_S11_Eating or cam2_S11_Phoning_2
+
+            # Extract subject id from clip name
+            m = re.search(r'_S(\d+)_', clip)
+            if not m:
+                continue
+            sid = int(m.group(1))
+
+            # Subject filter
+            if allowed is not None and sid not in allowed:
+                continue
+
+            # Route to the right list
+            if is_event:
                 event_paths.append(path)
-            elif '/ch0GT50Hzskeleton/data.log' in path:
+            else:
                 skltn_paths.append(path)
 
         return event_paths, skltn_paths
+
 
     @property
     def processed_file_names(self):

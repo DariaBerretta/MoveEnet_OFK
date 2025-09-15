@@ -15,6 +15,7 @@ def build_scarf_graph_splineConv(
     k_neighbour: int = 4,
     active_ratio: float = 0.15,
     radius: float = 25.0,
+    device: str = 'auto',
 ):
     """
     Build a PyG Data graph for SplineConv models from a SCARF state + a 2D skeleton.
@@ -31,36 +32,46 @@ def build_scarf_graph_splineConv(
     - edge_attr: (dx, dy) via Cartesian() for SplineConv (dim=2).
     - y: shape [1, 2J] --> where J is the number of joints in the skeleton.
     - th_pck: torso dimension (distance between joints 2 and 9)
+    
+    Args:
+        device: 'auto', 'cuda', 'cpu', or specific device like 'cuda:0'
     """
+    # Auto-detect device
+    if device == 'auto':
+        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    
     active_rfs = scarf.get_active_RF(active_ratio)
     
     # Pre-allocate arrays for better performance
     num_rfs = len(active_rfs)
     node_features = np.zeros((num_rfs, 10), dtype=np.float32)
     
+    # Pre-create PCA object to avoid repeated initialization overhead
+    pca = PCA(n_components=2)
+    
     # Determine the node features
     for i, rf in enumerate(active_rfs):
         RF_idx, _, events = rf
 
-       # Compute means (vectorized)
-        events_xy = events[:, :2]
-        x_mean, y_mean = np.mean(events_xy, axis=0)
+        # Compute means (vectorized) - use events directly, no need for extra variable
+        x_mean, y_mean = np.mean(events[:, :2], axis=0)
 
-        # PCA
-        pca = PCA(n_components=2)
-        pca.fit(events[:,:2])
+        # PCA - use already created PCA object
+        pca.fit(events[:, :2])
 
-        v1,v2 = pca.components_
-        lambda_1,lambda_2 = pca.explained_variance_
+        v1, v2 = pca.components_
+        lambda_1, lambda_2 = pca.explained_variance_
 
-        eccentricity = float(np.sqrt(1 - lambda_2/lambda_1))
+        # Avoid unnecessary float() conversions - direct assignment to float32 array
+        eccentricity = np.sqrt(1 - lambda_2/lambda_1) if lambda_1 > 0 else 0.0
 
-        node_features[i]= [
+        # Direct assignment without creating intermediate list
+        node_features[i, :] = [
             x_mean, y_mean, 
             RF_idx, 
-            float(v1[0]), float(v1[1]), 
-            float(v2[0]), float(v2[1]), 
-            float(lambda_1), float(lambda_2), 
+            v1[0], v1[1], 
+            v2[0], v2[1], 
+            lambda_1, lambda_2, 
             eccentricity
         ]
 
@@ -69,17 +80,17 @@ def build_scarf_graph_splineConv(
         print("[ERROR] Not enogh avtive RFs to build the graph.")
         return None
     
-    # Creation of the nodes tensor
-    nodes = torch.tensor(np.array(node_features), dtype=torch.float32)
+    # Creation of the nodes tensor - direct conversion and move to GPU
+    nodes = torch.from_numpy(node_features).float().to(device)
 
     # Creation of the edges 
-    positions = nodes[:, 0:2].contiguous()    # The kNN is based on the distance between the "center of mass" (x_mean, y_mean) of each RFs
+    positions = nodes[:, 0:2].contiguous()    # Already on GPU
 
     edge_index = radius_graph(x=positions, r=radius, max_num_neighbors=k_neighbour, loop=False)
 
-    # Ensure y is correct shape and type
-    y = torch.tensor(current_skeleton, dtype=torch.float32).unsqueeze(0)
-    # Compute th_pck (example: distance between joint 2 and 9)
+    # Ensure y is correct shape and type - move to GPU
+    y = torch.tensor(current_skeleton, dtype=torch.float32, device=device).unsqueeze(0)
+    # Compute th_pck (distance between joint 2 and 9) - GPU accelerated
     kp = y.reshape(-1, 2)
     th_pck = torch.norm(kp[2] - kp[9]).unsqueeze(0)
 
