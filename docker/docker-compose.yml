@@ -1,0 +1,31 @@
+services:
+  moveEnet_flow:
+    container_name: moveEnet_flow
+    image: hpe
+    build: .                                    # Use Dockerfile in current directory
+    network_mode: host                          # Use host networking
+    privileged: true                            # Enable privileged mode,allow hardware access. Required for GPU access
+
+    volumes:
+      - /home/dberretta-iit.local/Documents/Repos/GraphEnet-v2/:/home           # Mount project directory to /home in container
+      - /tmp/.X11-unix:/tmp/.X11-unix           # Mount X11 socket for GUI applications
+      - /home/dberretta-iit.local/data:/data    # Mount host data directory to /data in container
+      - /dev:/dev                               # Mount /dev for hardware access (e.g., GPU)
+
+    environment:
+      - DISPLAY=${DISPLAY}                      # Pass host DISPLAY to container for GUI
+      - QT_X11_NO_MITSHM=1                      # Fix for Qt apps with X11
+
+    deploy:  # Enable GPU access (requires Docker Compose v3.8+ and NVIDIA Container Toolkit)
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+    command: sleep infinity                     # Keep the container running
+
+    
+
+ 

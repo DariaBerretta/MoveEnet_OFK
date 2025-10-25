@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
 
+# Fix CUDA multiprocessing issue - MUST be at the very top
+import multiprocessing as mp
+mp.set_start_method('spawn', force=True)
+
+
 from logging import config
 import os
 import json
@@ -81,15 +86,15 @@ def setup_training(cfg):
         train_dataset, 
         batch_size=cfg['batch_size'], 
         shuffle=True, 
-        num_workers=4,
-        persistent_workers=True
+        num_workers=2,
+        # persistent_workers=True
     )
     
     val_loader = DataLoader(
         val_dataset, 
         batch_size=cfg['batch_size'],  
-        num_workers=4,
-        persistent_workers=True
+        num_workers=2,
+        # persistent_workers=True
     )
     
     print("DataLoaders created")
@@ -149,7 +154,7 @@ def setup_training(cfg):
         # Trainer with improved settings
         trainer = pl.Trainer(
             max_epochs=cfg['epochs'], 
-            check_val_every_n_epoch=2,  # More frequent validation
+            check_val_every_n_epoch=5,  # More frequent validation
             callbacks=[MyProgressBar(), early_stop_callback], 
             logger=logger, 
             min_epochs=int(cfg['epochs']/4),  # Minimum 25% of epochs

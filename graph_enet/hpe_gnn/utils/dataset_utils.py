@@ -63,25 +63,15 @@ def new_dataset_split(dataset, style=None, fraction=None, dataset_label='dev'):
         
         print(f"Splitting dataset into {train_end}/{val_end-train_end}/{total_items-val_end} samples...")
         
-         # Fast sequential slicing with progress tracking
-        with tqdm(total=3, desc="Dataset splitting", unit="splits") as pbar:
-            # Train split - much faster list comprehension
-            train_dataset = [dataset[i] for i in tqdm(range(train_end), 
-                                                   desc="Train split", 
-                                                   leave=False)]
-            pbar.update(1)
-            
-            # Val split
-            val_dataset = [dataset[i] for i in tqdm(range(train_end, val_end), 
-                                                   desc="Val split", 
-                                                   leave=False)]
-            pbar.update(1)
-            
-            # Test split
-            test_dataset = [dataset[i] for i in tqdm(range(val_end, total_items), 
-                                                    desc="Test split", 
-                                                    leave=False)]
-            pbar.update(1)
+        # Fast sequential slicing
+        # Train split
+        train_dataset = [dataset[i] for i in range(train_end)]
+        
+        # Val split
+        val_dataset = [dataset[i] for i in range(train_end, val_end)]
+        
+        # Test split
+        test_dataset = [dataset[i] for i in range(val_end, total_items)]
 
         print(f"Dataset split complete: {len(train_dataset)}/{len(val_dataset)}/{len(test_dataset)} (train/val/test)")
 
