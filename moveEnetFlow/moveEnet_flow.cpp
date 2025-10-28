@@ -154,7 +154,8 @@ public:
         }
         
         yInfo() << event_loader.getinfo();
-        end_time = event_loader.getLength();
+        // Calculate duration from first to last event timestamp
+        end_time = event_loader.end().timestamp();
         yInfo() << "Dataset duration:" << end_time << "seconds";
 
         // =====INITIALIZE REPRESENTATIONS=====
@@ -163,7 +164,8 @@ public:
         sae_handler.init(image_size.width, image_size.height);
 
         // =====INITIALIZE VELOCITY ESTIMATOR=====
-        velocity_estimator.setParameters(roiSize, 1, image_size);
+        // pwtripletvelocity doesn't need explicit initialization
+        velocity_estimator.prev_update_ts = 0;
 
         // Initialize pose structures
         current_pose.pose.fill({0.0, 0.0});
@@ -306,9 +308,6 @@ public:
             binary_handler.update(v->x, v->y, v->p);
         }
 
-        // Update SAE for velocity estimator
-        velocity_estimator.updateSAE(event_loader.begin(), event_loader.end(), current_time);
-
         // Send EROS to MoveEnet if not waiting for previous result
         if (!movenet_waiting) {
             sendEROSToMoveEnet();
@@ -334,7 +333,7 @@ public:
         if (hpecore::poseNonZero(current_pose.pose)) {
             // The multi_area_velocity returns skeleton13 directly
             current_velocity = velocity_estimator.multi_area_velocity(
-                velocity_estimator.querySAEP(),
+                sae_handler.getSurface(),
                 current_time,
                 current_pose.pose,
                 roiSize
