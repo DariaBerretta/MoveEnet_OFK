@@ -13,9 +13,12 @@
 #include <yarp/os/all.h>
 #include <yarp/sig/Image.h>
 #include <event-driven/core.h>
+#include <event-driven/vis.h>
+#include <event-driven/algs.h>
 #include <hpe-core/utility.h>
 #include <hpe-core/motion_estimation.h>
 #include <hpe-core/motion.h>
+#include <hpe-core/fusion.h>
 #include <hpe-core/representations.h>
 #include <opencv2/opencv.hpp>
 #include <vector>
@@ -28,14 +31,77 @@ using namespace yarp::os;
 using namespace yarp::sig;
 using std::vector;
 
-class OfflineHPE : public RFModule
+
+class externalDetector
+{
+private:
+    double period{0.1}, tic{0.0};
+    bool waiting{false};
+
+    BufferedPort<ImageOf<PixelMono>> output_port;
+    BufferedPort<Bottle> input_port;
+
+public:
+    bool init(std::string output_name, std::string input_name, double rate)
+    {
+        if (!output_port.open(output_name))
+            return false;
+
+        if (!input_port.open(input_name))
+            return false;
+
+        period = 1.0 / rate;
+        return true;
+    }
+    void close()
+    {
+        output_port.close();
+        input_port.close();
+    }
+
+    bool update(const cv::Mat &latest_image, double latest_ts, hpecore::stampedPose &previous_skeleton)
+    {
+        // send an update if the timer has elapsed
+        if(latest_ts < tic) tic = latest_ts - 2.0;
+        if ((!waiting && latest_ts - tic > period) || (latest_ts - tic > 2.0))
+        {
+            static cv::Mat cv_image;
+            latest_image.convertTo(cv_image, CV_8U);
+            cv::GaussianBlur(cv_image, cv_image, cv::Size(5, 5), 0, 0);
+            output_port.prepare().copy(yarp::cv::fromCvMat<PixelMono>(cv_image));
+            output_port.write();
+            tic = latest_ts;
+            waiting = true;
+        }
+
+        // read a ready data
+        Bottle *mn_container = input_port.read(false);
+        if (mn_container)
+        {
+            previous_skeleton.pose = hpecore::extractSkeletonFromYARP<Bottle>(*mn_container);
+            previous_skeleton.conf = hpecore::extractConfidenceFromYARP<Bottle>(*mn_container);
+            previous_skeleton.timestamp = tic;
+            previous_skeleton.delay = latest_ts - tic;
+            waiting = false;
+        }
+
+        return mn_container != nullptr;
+    }
+};
+
+
+
+
+class MOVENET_FLOW : public RFModule
 {
 private:
     // Event data loader
     ev::offlineLoader<ev::AE> event_loader;
     ev::window<ev::AE> event_window;
     
-    // Event representations
+    // Event representations handlers
+    externalDetector mn_handler;
+    // delayedGT gt_handler;
     hpecore::EROS eros_handler;
     hpecore::SAE sae_handler;
     hpecore::BIN binary_handler;
@@ -54,6 +120,7 @@ private:
     // Parameters
     cv::Size image_size;
     int roiSize{20};
+    int detF{10};  // Detection frequency in Hz
     double batch_frequency{100.0};  // Hz
     double batch_period;  // seconds
     std::string log_path;
@@ -87,14 +154,11 @@ public:
     bool configure(yarp::os::ResourceFinder &rf) override
     {
         if (rf.check("help")) {
-            yInfo() << "Offline Human Pose Estimation System";
+            yInfo() << "MoveEnet_Flow System";
             yInfo() << "";
             yInfo() << "Options:";
             yInfo() << "--log_path <string>        : Path to .log event file (required)";
-            yInfo() << "--w <int>                  : Image width [640]";
-            yInfo() << "--h <int>                  : Image height [480]";
-            yInfo() << "--frequency <double>       : Batch processing frequency in Hz [100.0]";
-            yInfo() << "--roi <int>                : ROI size for velocity estimation [20]";
+            yInfo() << "--f_det <double>           : detection rate in Hz [30]";
             yInfo() << "--confidence <double>      : Confidence threshold for visualization [0.4]";
             yInfo() << "--checkpoint_path <string> : Path to MoveEnet checkpoint";
             yInfo() << "--output_csv <string>      : Path to save CSV output";
@@ -104,32 +168,38 @@ public:
         }
 
         // =====SET UP YARP=====
-        if (!yarp::os::Network::checkNetwork(2.0)) {
-            yError() << "YARP network not available";
+        if (!yarp::os::Network::checkNetwork(2.0))
+        {
+            std::cout << "Could not connect to YARP" << std::endl;
             return false;
         }
 
-        // Set module name
-        setName((rf.check("name", Value("/offline_hpe")).asString()).c_str());
+        // Set module name FIRST (required before opening ports). The module name is used to name ports
+        std::string module_name = rf.check("name", Value("/moveEnet_flow")).asString();
+        setName(module_name.c_str());
+        yInfo() << "Module name set to:" << module_name;
+        
 
         // =====READ PARAMETERS=====
+        // Path to event log file --> input event data
         log_path = rf.check("log_path", Value("")).asString();
         if (log_path.empty()) {
             yError() << "Please provide --log_path";
             return false;
         }
-
+        // Image size for representations, visualization, and velocity estimation
         image_size = cv::Size(
             rf.check("w", Value(640)).asInt32(),
             rf.check("h", Value(480)).asInt32()
         );
-        
-        batch_frequency = rf.check("frequency", Value(100.0)).asFloat64();
-        batch_period = 1.0 / batch_frequency;
+
+        batch_frequency = rf.check("f_det", Value(30.0)).asFloat64();   //[Hz]
+        batch_period = 1.0 / batch_frequency;                           //[s] --> periodo
         
         roiSize = rf.check("roi", Value(20)).asInt32();
         c_thresh = rf.check("confidence", Value(0.4)).asFloat64();
         
+        // MoveEnet checkpoint path
         std::string checkpoint_path = rf.check("checkpoint_path", 
             Value("/usr/local/src/hpe-core/example/movenet/models/e97_valacc0.81209.pth")).asString();
         
@@ -146,103 +216,61 @@ public:
         
         visualize = !(rf.check("no_viz") && rf.check("no_viz", Value(true)).asBool());
 
-        // =====LOAD EVENT DATA=====
-        yInfo() << "Loading event data from:" << log_path;
-        if (!event_loader.load(log_path)) {
-            yError() << "Could not load event data from" << log_path;
+        // ==== START MOVENET NETWORK =====
+        std::string command = "python3 /usr/local/src/hpe-core/example/movenet/movenet_online.py --checkpoint_path " + checkpoint_path + " &";
+        int r = system(command.c_str());
+
+        // Wait for MoveEnet to start and open its output port
+        while (!yarp::os::NetworkBase::exists("/movenet/sklt:o"))
+            sleep(1);
+        yInfo() << "MoveEnet started correctly";
+
+        // initialize MoveEnet handler
+        if (!mn_handler.init(getName("/eros:o"), getName("/movenet:i"), batch_frequency))
+        {
+            yError() << "Could not open movenet ports";
             return false;
         }
-        
-        yInfo() << event_loader.getinfo();
-        // Calculate duration from first to last event timestamp
-        end_time = event_loader.end().timestamp();
-        yInfo() << "Dataset duration:" << end_time << "seconds";
 
-        // =====INITIALIZE REPRESENTATIONS=====
+        // ===== SET UP INTERNAL VARIABLE/DATA STRUCTURES =====
+
+        // Initialize event representations
         eros_handler.init(image_size.width, image_size.height, 7, 0.3);
         binary_handler.init(image_size.width, image_size.height);
         sae_handler.init(image_size.width, image_size.height);
 
-        // =====INITIALIZE VELOCITY ESTIMATOR=====
-        // pwtripletvelocity doesn't need explicit initialization
-        velocity_estimator.prev_update_ts = 0;
-
-        // Initialize pose structures
-        current_pose.pose.fill({0.0, 0.0});
-        current_pose.conf.fill(0.0);
-        current_pose.timestamp = 0.0;
-        current_pose.delay = 0.0;
-        current_velocity.fill({0.0, 0.0});
-
-        // =====START MOVENET=====
-        std::string command = "python3 /usr/local/src/hpe-core/example/movenet/movenet_online.py --gpu --checkpoint_path " + checkpoint_path + " &";
-        yInfo() << "Starting MoveEnet with command:" << command;
-        int r = system(command.c_str());
-        
-        // Wait for MoveEnet to be ready
-        yInfo() << "Waiting for MoveEnet to start...";
-        int wait_count = 0;
-        while (!yarp::os::NetworkBase::exists("/movenet/sklt:o")) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(500));
-            wait_count++;
-            if (wait_count > 20) {
-                yError() << "MoveEnet failed to start";
-                return false;
-            }
-        }
-        yInfo() << "MoveEnet started successfully";
-
-        // =====OPEN MOVENET PORTS=====
-        if (!movenet_output_port.open(getName("/eros:o"))) {
-            yError() << "Could not open output port";
-            return false;
-        }
-        
-        if (!movenet_input_port.open(getName("/movenet:i"))) {
-            yError() << "Could not open input port";
-            return false;
-        }
-
-        // Connect ports
-        Network::connect(getName("/eros:o"), "/movenet/img:i", "fast_tcp");
+        // ==== TRY DEFAULT CONNECTIONS =====
+        Network::connect("/file/ch0dvs:o", getName("/AE:i"), "fast_tcp");
+        Network::connect("/file/ch2GT50Hzskeleton:o", getName("/gt:i"), "fast_tcp");
         Network::connect("/movenet/sklt:o", getName("/movenet:i"), "fast_tcp");
+        Network::connect(getName("/eros:o"), "/movenet/img:i", "fast_tcp");
 
-        // =====SETUP OUTPUT FILES=====
-        if (save_csv) {
-            csv_file.open(output_csv_path);
-            if (!csv_file.is_open()) {
-                yError() << "Could not open CSV file:" << output_csv_path;
-                return false;
-            }
-            // Write CSV header
-            csv_file << "timestamp,delay";
-            for (int i = 0; i < 13; i++) {
-                csv_file << ",j" << i << "_u,j" << i << "_v,j" << i << "_conf";
-                csv_file << ",j" << i << "_vel_u,j" << i << "_vel_v";
-            }
-            csv_file << "\n";
-            yInfo() << "CSV output:" << output_csv_path;
+        // ==== LOAD EVENT DATA FROM LOG FILE =====
+        yInfo() << "Loading data ... ";
+        if (!event_loader.load(log_path, 60)) {
+            yError() << "Could not open data file" << log_path;
+            return false;
+        }
+        else {
+            yInfo() << event_loader.getinfo();
+        //    yInfo() << "Data time length [s]: " << event_loader.getLength();
+        }  
+
+        // ==== SEND EVENT DATA TO MOVENET =====
+        // Open MoveEnet ports
+        movenet_output_port.open(getName("/movenet/img:i").c_str());
+        movenet_input_port.open(getName("/movenet/sklt:o").c_str());    
+        yInfo() << "MoveEnet ports opened";
+
+        // Start of the cicle where events are sent to MoveEnet,
+        // detections are received, velocities computed, 
+        // results saved and visualized
+        // The loop runs until the end of the dataset is reached
+        while (true) {
+            if (!updateModule())
+                break;
         }
 
-        if (save_video) {
-            int fourcc = cv::VideoWriter::fourcc('M','J','P','G');
-            video_writer.open(output_video_path, fourcc, batch_frequency, image_size);
-            if (!video_writer.isOpened()) {
-                yError() << "Could not open video file:" << output_video_path;
-                return false;
-            }
-            yInfo() << "Video output:" << output_video_path;
-        }
-
-        // =====SETUP VISUALIZATION=====
-        if (visualize) {
-            cv::namedWindow("Offline HPE", cv::WINDOW_NORMAL);
-            cv::resizeWindow("Offline HPE", image_size);
-        }
-
-        yInfo() << "Configuration complete. Starting processing...";
-        yInfo() << "Batch frequency:" << batch_frequency << "Hz (" << batch_period << "s period)";
-        
         return true;
     }
 
@@ -308,14 +336,17 @@ public:
             binary_handler.update(v->x, v->y, v->p);
         }
 
-        // Send EROS to MoveEnet if not waiting for previous result
-        if (!movenet_waiting) {
+        // Send EROS to MoveEnet at the detection rate (not every update)
+        static double last_send_time = 0.0;
+        double send_period = 1.0 / detF;  // detF is detection frequency (Hz)
+        
+        if (current_time - last_send_time >= send_period) {
             sendEROSToMoveEnet();
-            movenet_waiting = true;
+            last_send_time = current_time;
             movenet_request_time = current_time;
         }
 
-        // Try to read detection from MoveEnet
+        // Always try to read detection from MoveEnet (non-blocking)
         Bottle *detection = movenet_input_port.read(false);
         if (detection && detection->size() > 0) {
             try {
@@ -323,7 +354,6 @@ public:
                 current_pose.conf = hpecore::extractConfidenceFromYARP<Bottle>(*detection);
                 current_pose.timestamp = movenet_request_time;
                 current_pose.delay = current_time - movenet_request_time;
-                movenet_waiting = false;
             } catch (const std::exception& e) {
                 yWarning() << "Failed to parse detection:" << e.what();
             }
@@ -369,7 +399,7 @@ private:
         
         ImageOf<PixelMono> &img = movenet_output_port.prepare();
         img.copy(yarp::cv::fromCvMat<PixelMono>(eros8));
-        movenet_output_port.write();
+        movenet_output_port.write();  // Use regular write() like edpr-april.cpp
     }
 
     void saveResults()
@@ -430,14 +460,13 @@ private:
     }
 };
 
-int main(int argc, char *argv[])
-{
+int main(int argc, char *argv[]) {
     /* prepare and configure the resource finder */
     yarp::os::ResourceFinder rf;
     rf.setVerbose(false);
     rf.configure(argc, argv);
 
     /* create the module */
-    OfflineHPE instance;
+    MOVENET_FLOW instance;
     return instance.runModule(rf);
 }

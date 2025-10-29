@@ -40,6 +40,16 @@ sudo make install
 
 ## Usage
 
+### Important: Data Path for Docker Users
+
+**If running inside the Docker container**, use `/data/` as the data path prefix, NOT `/home/dberretta-iit.local/data/`.
+
+The docker-compose.yml mounts the host directory `/home/dberretta-iit.local/data` to `/data` inside the container.
+
+Example:
+- ❌ Wrong: `--log_path /home/dberretta-iit.local/data/new_scarfGNN_full/raw/cam2_S1_Directions/ch0dvs/data.log`
+- ✅ Correct: `--log_path /data/new_scarfGNN_full/raw/cam2_S1_Directions/ch0dvs/data.log`
+
 ### moveEnet_flow - Offline HPE Processing
 
 Process event data from .log files and extract human pose with velocity estimation.
@@ -47,7 +57,7 @@ Process event data from .log files and extract human pose with velocity estimati
 #### Basic Usage
 
 ```bash
-./moveEnet_flow --log_path /path/to/data.log --output_csv results.csv --output_video output.avi
+./moveEnet_flow --log_path /data/path/to/data.log --output_csv results.csv --output_video output.avi
 ```
 
 #### Command-line Parameters

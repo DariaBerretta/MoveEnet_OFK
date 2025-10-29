@@ -9,15 +9,14 @@ find_package(hpe-core REQUIRED)
 
 # Include directories
 include_directories(
+    ${YARP_INCLUDE_DIRS}
     ${OpenCV_INCLUDE_DIRS}
 )
 
 # Build moveEnet_flow executable (offline HPE)
 add_executable(moveEnet_flow moveEnet_flow.cpp)
 target_link_libraries(moveEnet_flow
-    YARP::YARP_OS 
-    YARP::YARP_sig
-    YARP::YARP_cv
+    ${YARP_LIBRARIES}
     ${OpenCV_LIBS}
     ev::event-driven
     hpe-core::hpe-core
