@@ -17,3 +17,5 @@ prediction_results/
 prompts/
 moveEnetFlow/edpr-april.cpp
 moveEnetFlow/extract_eros.cpp
+moveEnetFlow/csv_file
+moveEnetFlow/avi_file

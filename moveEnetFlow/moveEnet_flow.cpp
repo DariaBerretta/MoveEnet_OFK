@@ -1,5 +1,4 @@
 /*
- * Offline Human Pose Estimation using Event-based Data
  * Author: Daria Berretta
  * 
  * This system processes event data from .log files offline to:
@@ -7,6 +6,12 @@
  * 2. Detect human poses using MoveEnet
  * 3. Estimate joint velocities
  * 4. Save results to CSV and video
+
+
+
+    BEFORE TO OPEN THE DOCKER REMBER TO:
+    1. xhost +local:docker
+    2. start yarp server: yarpserver &
  */
 
 #include <yarp/cv/Cv.h>
@@ -89,376 +94,342 @@ public:
     }
 };
 
-
-
-
-class MOVENET_FLOW : public RFModule
+class MOVEENET_FLOW : public RFModule
 {
-private:
-    // Event data loader
-    ev::offlineLoader<ev::AE> event_loader;
-    ev::window<ev::AE> event_window;
-    
-    // Event representations handlers
-    externalDetector mn_handler;
-    // delayedGT gt_handler;
-    hpecore::EROS eros_handler;
-    hpecore::SAE sae_handler;
-    hpecore::BIN binary_handler;
-    
-    // MoveEnet communication
-    BufferedPort<ImageOf<PixelMono>> movenet_output_port;
-    BufferedPort<Bottle> movenet_input_port;
-    
-    // Velocity estimation
-    hpecore::pwtripletvelocity velocity_estimator;
-    
-    // Data structures
-    hpecore::stampedPose current_pose;
-    hpecore::skeleton13 current_velocity;
-    
-    // Parameters
-    cv::Size image_size;
-    int roiSize{20};
-    int detF{10};  // Detection frequency in Hz
-    double batch_frequency{100.0};  // Hz
-    double batch_period;  // seconds
-    std::string log_path;
-    std::string output_csv_path;
-    std::string output_video_path;
-    bool save_csv{false};
-    bool save_video{false};
-    bool visualize{true};
-    double c_thresh{0.4};  // Confidence threshold
-    
-    // Processing state
-    double current_time{0.0};
-    double end_time{0.0};
-    bool movenet_waiting{false};
-    double movenet_request_time{0.0};
-    
-    // Output file handles
-    std::ofstream csv_file;
-    cv::VideoWriter video_writer;
-    
-    // Visualization
-    cv::Scalar colors[13] = {
-        {0, 0, 180}, {0, 180, 0}, {0, 0, 180},
-        {180, 180, 0}, {180, 0, 180}, {0, 180, 180},
-        {120, 0, 180}, {120, 180, 0}, {0, 120, 180},
-        {120, 120, 180}, {120, 180, 120}, {120, 120, 180}, 
-        {120, 120, 120}
-    };
+    private:
 
-public:
-    bool configure(yarp::os::ResourceFinder &rf) override
-    {
-        if (rf.check("help")) {
-            yInfo() << "MoveEnet_Flow System";
-            yInfo() << "";
-            yInfo() << "Options:";
-            yInfo() << "--log_path <string>        : Path to .log event file (required)";
-            yInfo() << "--f_det <double>           : detection rate in Hz [30]";
-            yInfo() << "--confidence <double>      : Confidence threshold for visualization [0.4]";
-            yInfo() << "--checkpoint_path <string> : Path to MoveEnet checkpoint";
-            yInfo() << "--output_csv <string>      : Path to save CSV output";
-            yInfo() << "--output_video <string>    : Path to save video output";
-            yInfo() << "--no_viz                   : Disable real-time visualization";
-            return false;
-        }
+        // Save output csv file and video
+        std::ofstream csv_file;
+        cv::VideoWriter video_writer;
 
-        // =====SET UP YARP=====
-        if (!yarp::os::Network::checkNetwork(2.0))
+        // Event loader from .log file
+        ev::offlineLoader<ev::AE> eloader;
+        double data_timelength{0.0};
+
+        //Surface handlers
+        hpecore::EROS eros_handler;
+        hpecore::SAE sae_handler;
+        hpecore::BIN binary_handler;
+
+        // Detection handler
+        externalDetector mn_handler;
+
+        // Detected pose
+        hpecore::stampedPose detected_pose;
+
+        // Velocity estimation
+        hpecore::pwtripletvelocity velocity_estimator;
+
+        // standard parameters
+        cv::Size image_size;
+        int roiSize{20};
+        int detF{10};
+        double th_period{0.01}, thF{100.0};
+        double c_thresh{0.4};
+        bool is_visualize{false};
+        cv::Scalar colors[13] = {{0, 0, 180}, {0, 180, 0}, {0, 0, 180},
+                        {180, 180, 0}, {180, 0, 180}, {0, 180, 180},
+                        {120, 0, 180}, {120, 180, 0}, {0, 120, 180},
+                        {120, 120, 180}, {120, 180, 120}, {120, 120, 180}, {120, 120, 120}};
+
+                    
+    
+
+    public:
+
+        bool configure(yarp::os::ResourceFinder &rf) override
         {
-            std::cout << "Could not connect to YARP" << std::endl;
-            return false;
+            // 1. If request print help for command line and exit
+            if(rf.check("help")) 
+            {
+                yInfo() << "--help:";
+                yInfo() << "--log_path <string>: path to input .log event data file";
+                yInfo() << "--f_det <int>: detection frequency (default 10Hz)";
+                yInfo() << "--f_vis <double>: visualization frequency (default 100Hz)";
+                yInfo() << "--output_csv <string>: path to output csv file for joint positions and velocities";
+                yInfo() << "--output_video <string>: path to output video file";
+                yInfo() << "--vis: flag to enable visualization, if not set no display is shown";
+                return false;
+            }
+
+            // 2. Setup YARP connection
+            if (!yarp::os::Network::checkNetwork(2.0))
+            {
+                std::cout << "Could not connect to YARP" << std::endl;
+                return false;
+            }
+
+            // 3. Set up module name
+            setName((rf.check("name", Value("/moveenet_flow")).asString()).c_str());
+
+            // 4. Read parameters from command line
+            detF = rf.check("f_det", Value(10)).asInt32();
+            double visF = rf.check("f_vis", Value(100.0)).asFloat64();
+            std::string log_path = rf.check("log_path", Value("/data/new_scarfGNN_full/raw/cam2_S1_Directions/ch0dvs/data.log")).asString();
+            std::string output_csv = rf.check("output_csv", Value("/home/moveEnetFlow/csv_file/251105_test3.csv")).asString();
+            std::string output_video = rf.check("output_video", Value("/home/moveEnetFlow/avi_file/251105_test3.avi")).asString(); 
+            is_visualize = rf.check("vis");
+            
+            yInfo() << "Configuration:";
+            yInfo() << "  - Log path: " << log_path;
+            yInfo() << "  - Output CSV: " << output_csv;
+            yInfo() << "  - Output video: " << output_video;
+            yInfo() << "  - Visualization: " << (is_visualize ? "ENABLED" : "DISABLED");
+            yInfo() << "  - Detection freq: " << detF << " Hz";
+            yInfo() << "  - Visualization freq: " << visF << " Hz"; 
+
+            // 5. Initialize internal parameters
+            
+            image_size = cv::Size(rf.check("w", Value(640)).asInt32(),
+                                  rf.check("h", Value(480)).asInt32());
+            roiSize = rf.check("roi", Value(20)).asInt32();
+
+            std::string checkpoint_path = rf.check("checkpoint_path", Value("/usr/local/src/hpe-core/example/movenet/models/e97_valacc0.81209.pth")).asString();
+            thF = visF;
+            th_period = 1/thF;
+            c_thresh = rf.check("confidence", Value(0.4)).asFloat64();
+
+
+            // Initialize EROS, SAE, Binary handlers
+            eros_handler.init(image_size.width, image_size.height, 7, 0.3);
+            binary_handler.init(image_size.width, image_size.height);
+            sae_handler.init(image_size.width, image_size.height);
+
+            // 6. Start of moveEnet flow process
+            yInfo() << "Starting MoveEnet flow process...";
+            std::string command = "python3 /usr/local/src/hpe-core/example/movenet/movenet_online.py --checkpoint_path " + checkpoint_path + " &";
+            system(command.c_str());
+
+            // check if moveEnet process started
+            while (!yarp::os::NetworkBase::exists("/movenet/sklt:o"))
+                sleep(1);
+            yInfo() << "MoveEnet started correctly";
+
+            // 7. Initialise .csv output file
+            csv_file.open(output_csv);
+            csv_file << "timestamp";
+            for (int j = 0; j < 13; j++) {
+                csv_file << ",joint" << j << "_x,joint" << j << "_y,joint" << j << "_vx,joint" << j << "_vy,confidence" << j;
+            }
+            csv_file << "\n";
+
+            // 8. Initialize video writer (always, independent of visualization)
+            video_writer.open(output_video, cv::VideoWriter::fourcc('M','J','P','G'), thF, image_size);
+            if (!video_writer.isOpened()) {
+                yError() << "Could not open the output video for write: " << output_video;
+                return false;
+            }
+            yInfo() << "Video writer initialized successfully: " << output_video;
+
+            // 9. Initialize visualization window if requested
+            if (is_visualize) {
+                cv::namedWindow("moveenet-flow", cv::WINDOW_NORMAL);
+                cv::resizeWindow("moveenet-flow", image_size);
+                yInfo() << "Visualization window created";
+            }
+
+            // 9. Initialize MoveEnet detection handler
+            if (!mn_handler.init(getName("/eros:o"), getName("/movenet:i"), detF))
+            {
+                yError() << "Could not open movenet ports";
+                return false;
+            }
+
+            // 10. Connect MoveEnet ports
+            Network::connect("/movenet/sklt:o", getName("/movenet:i"), "fast_tcp");
+            Network::connect(getName("/eros:o"), "/movenet/img:i", "fast_tcp");
+
+            // 11. Initialize velocity estimator
+            // velocity_estimator doesn't need explicit initialization
+
+            // 12. Initialize offline event loader from .log file
+            if (!eloader.load(log_path)) {
+                yError() << "Could not open event log file: " << log_path;
+                return false;
+            }
+            yInfo() << "Successfully opened event log file: " << log_path;
+            yInfo() << eloader.getinfo();
+
+
+            return true;
         }
-
-        // Set module name FIRST (required before opening ports). The module name is used to name ports
-        std::string module_name = rf.check("name", Value("/moveEnet_flow")).asString();
-        setName(module_name.c_str());
-        yInfo() << "Module name set to:" << module_name;
-        
-
-        // =====READ PARAMETERS=====
-        // Path to event log file --> input event data
-        log_path = rf.check("log_path", Value("")).asString();
-        if (log_path.empty()) {
-            yError() << "Please provide --log_path";
-            return false;
-        }
-        // Image size for representations, visualization, and velocity estimation
-        image_size = cv::Size(
-            rf.check("w", Value(640)).asInt32(),
-            rf.check("h", Value(480)).asInt32()
-        );
-
-        batch_frequency = rf.check("f_det", Value(30.0)).asFloat64();   //[Hz]
-        batch_period = 1.0 / batch_frequency;                           //[s] --> periodo
-        
-        roiSize = rf.check("roi", Value(20)).asInt32();
-        c_thresh = rf.check("confidence", Value(0.4)).asFloat64();
-        
-        // MoveEnet checkpoint path
-        std::string checkpoint_path = rf.check("checkpoint_path", 
-            Value("/usr/local/src/hpe-core/example/movenet/models/e97_valacc0.81209.pth")).asString();
-        
-        // Output options
-        if (rf.check("output_csv")) {
-            output_csv_path = rf.check("output_csv", Value("output.csv")).asString();
-            save_csv = true;
-        }
-        
-        if (rf.check("output_video")) {
-            output_video_path = rf.check("output_video", Value("output.avi")).asString();
-            save_video = true;
-        }
-        
-        visualize = !(rf.check("no_viz") && rf.check("no_viz", Value(true)).asBool());
-
-        // ==== START MOVENET NETWORK =====
-        std::string command = "python3 /usr/local/src/hpe-core/example/movenet/movenet_online.py --checkpoint_path " + checkpoint_path + " &";
-        int r = system(command.c_str());
-
-        // Wait for MoveEnet to start and open its output port
-        while (!yarp::os::NetworkBase::exists("/movenet/sklt:o"))
-            sleep(1);
-        yInfo() << "MoveEnet started correctly";
-
-        // initialize MoveEnet handler
-        if (!mn_handler.init(getName("/eros:o"), getName("/movenet:i"), batch_frequency))
-        {
-            yError() << "Could not open movenet ports";
-            return false;
-        }
-
-        // ===== SET UP INTERNAL VARIABLE/DATA STRUCTURES =====
-
-        // Initialize event representations
-        eros_handler.init(image_size.width, image_size.height, 7, 0.3);
-        binary_handler.init(image_size.width, image_size.height);
-        sae_handler.init(image_size.width, image_size.height);
-
-        // ==== TRY DEFAULT CONNECTIONS =====
-        Network::connect("/file/ch0dvs:o", getName("/AE:i"), "fast_tcp");
-        Network::connect("/file/ch2GT50Hzskeleton:o", getName("/gt:i"), "fast_tcp");
-        Network::connect("/movenet/sklt:o", getName("/movenet:i"), "fast_tcp");
-        Network::connect(getName("/eros:o"), "/movenet/img:i", "fast_tcp");
-
-        // ==== LOAD EVENT DATA FROM LOG FILE =====
-        yInfo() << "Loading data ... ";
-        if (!event_loader.load(log_path, 60)) {
-            yError() << "Could not open data file" << log_path;
-            return false;
-        }
-        else {
-            yInfo() << event_loader.getinfo();
-        //    yInfo() << "Data time length [s]: " << event_loader.getLength();
-        }  
-
-        // ==== SEND EVENT DATA TO MOVENET =====
-        // Open MoveEnet ports
-        movenet_output_port.open(getName("/movenet/img:i").c_str());
-        movenet_input_port.open(getName("/movenet/sklt:o").c_str());    
-        yInfo() << "MoveEnet ports opened";
-
-        // Start of the cicle where events are sent to MoveEnet,
-        // detections are received, velocities computed, 
-        // results saved and visualized
-        // The loop runs until the end of the dataset is reached
-        while (true) {
-            if (!updateModule())
-                break;
-        }
-
-        return true;
-    }
 
     double getPeriod() override
-    {
-        return batch_period;
-    }
+        {
+            // run the processing loop at the specified frame rate
+            return th_period;
+        }
 
     bool interruptModule() override
-    {
-        yInfo() << "Stopping module...";
-        return true;
-    }
+        {
+            // if the module is asked to stop, close ports and do other clean up
+            yInfo() << "Interrupting module and closing resources...";
+            
+            mn_handler.close();
+            
+            // close files
+            if (csv_file.is_open()) {
+                csv_file.close();
+                yInfo() << "CSV file closed";
+            }
+            
+            if (video_writer.isOpened()) {
+                video_writer.release();
+                yInfo() << "Video file closed and finalized";
+            }
+            
+            // Close visualization window if it exists
+            if (is_visualize) {
+                cv::destroyAllWindows();
+            }
+            
+            // kill moveEnet process and clear resources
+            yInfo() << "Stopping MoveEnet process...";
+            system("killall python3");
+
+            return true;
+        }
 
     bool close() override
+        {   
+            //close python process
+            system("killall python3");
+            return true;
+        }
+
+    void drawEROS(cv::Mat &img)
     {
-        // Close ports
-        movenet_output_port.close();
-        movenet_input_port.close();
+        cv::Mat eros8;
+        eros_handler.getSurface().convertTo(eros8, CV_8U);
+        cv::GaussianBlur(eros8, eros8, {9, 9}, 0);
+        cv::normalize(eros8, eros8, 0, 255, cv::NORM_MINMAX);
+        cv::cvtColor(eros8, img, cv::COLOR_GRAY2BGR);
+    }
+
+    void drawEVENTS(cv::Mat &img)
+    {
+        cv::Mat eventsmono;
+        binary_handler.getSurface().convertTo(eventsmono, CV_8U);
+        cv::cvtColor(eventsmono, img, CV_GRAY2BGR);
+    }
+
+    void drawSAE(cv::Mat &img)
+    {
+        cv::Mat sae64, saemono;
         
-        // Close output files
-        if (csv_file.is_open()) {
-            csv_file.close();
-            yInfo() << "CSV file closed";
-        }
-        
-        if (video_writer.isOpened()) {
-            video_writer.release();
-            yInfo() << "Video file closed";
-        }
-        
-        // Close visualization
-        if (visualize) {
-            cv::destroyAllWindows();
-        }
-        
-        // Kill MoveEnet process
-        yInfo() << "Stopping MoveEnet...";
-        int r = system("killall python3");
-        
-        yInfo() << "Module closed successfully";
-        return true;
+        sae_handler.getSurface().copyTo(sae64);
+        double maxval;
+        cv::minMaxLoc(sae64, nullptr, &maxval);
+        sae64 -= (maxval - 1.0);  //show 2 seconds of surface
+        //cv::threshold(sae64, sae64, 0, 0, cv::THRESH_BINARY);
+        sae64.convertTo(saemono, CV_8U, 255.0);
+        cv::cvtColor(saemono, img, CV_GRAY2BGR);
     }
 
     bool updateModule() override
     {
-        // Check if we've reached the end of the dataset
-        if (current_time >= end_time) {
-            yInfo() << "Processing complete!";
-            return false;
+        // ===== STEP 1: LOAD AND PROCESS EVENTS =====
+        static double tnow = 0.0;
+        static double pts = 0.0;
+        static int batch_count = 0;
+        double period = getPeriod();
+        
+        // Increment event loader to read events up to the next time period
+        tnow += period;
+        eloader.incrementReadTill(tnow);
+        
+        // Check for reset (if timestamps go backwards)
+        if(tnow < pts) {
+            sae_handler.getSurface().setTo(0.0);
+            binary_handler.getSurface().setTo(0.0);
+            eros_handler.getSurface().setTo(0.0);
+            yInfo() << "Event stream reset detected";
         }
-
-        // Update time
-        current_time += batch_period;
         
-        // Load events up to current time
-        event_loader.incrementReadTill(current_time);
-        
-        // Update all representations with new events
-        for (auto v = event_loader.begin(); v != event_loader.end(); v++) {
+        // Process all events in this time window
+        int event_count = 0;
+        for (ev::offlineLoader<ev::AE>::iterator v = eloader.begin(); v != eloader.end(); v++) {
             eros_handler.update(v->x, v->y);
-            sae_handler.update(v->x, v->y, current_time);
-            binary_handler.update(v->x, v->y, v->p);
+            binary_handler.update(v->x, v->y);
+            sae_handler.update(v->x, v->y, tnow);
+            event_count++;
         }
-
-        // Send EROS to MoveEnet at the detection rate (not every update)
-        static double last_send_time = 0.0;
-        double send_period = 1.0 / detF;  // detF is detection frequency (Hz)
         
-        if (current_time - last_send_time >= send_period) {
-            sendEROSToMoveEnet();
-            last_send_time = current_time;
-            movenet_request_time = current_time;
+        pts = tnow;
+        batch_count++;
+        
+        // Log progress every 100 frames
+        if (batch_count % 100 == 0) {
+            yInfo() << "Processed frame " << batch_count << " at t=" << tnow << "s, events=" << event_count;
         }
-
-        // Always try to read detection from MoveEnet (non-blocking)
-        Bottle *detection = movenet_input_port.read(false);
-        if (detection && detection->size() > 0) {
+        
+        // Check if we've reached the end of the file (no more events)
+        if (event_count == 0 && tnow > 0) {
+            yInfo() << "Finished processing event file (no more events). Total frames: " << batch_count;
+            return false; // Stop the module
+        }
+        
+        // ===== STEP 2: POSE DETECTION WITH MOVENET =====
+        bool was_detected = mn_handler.update(eros_handler.getSurface(), tnow, detected_pose);
+        
+        // ===== STEP 3: VELOCITY ESTIMATION =====
+        if (was_detected && hpecore::poseNonZero(detected_pose.pose)) {
+            // Estimate velocities using SAE surface
+            auto jvs = velocity_estimator.multi_area_velocity(sae_handler.getSurface(), tnow, detected_pose.pose, roiSize);
+            
+            // ===== STEP 4: SAVE RESULTS TO CSV =====
+            csv_file << std::fixed << std::setprecision(6) << tnow;
+            for (int j = 0; j < 13; j++) {
+                csv_file << "," << detected_pose.pose[j].u 
+                        << "," << detected_pose.pose[j].v
+                        << "," << jvs[j].u
+                        << "," << jvs[j].v
+                        << "," << detected_pose.conf[j];
+            }
+            csv_file << "\n";
+            csv_file.flush();  // Ensure data is written to disk
+        }
+        
+        // ===== STEP 5: VISUALIZATION AND VIDEO WRITING =====
+        static cv::Mat canvas = cv::Mat(image_size, CV_8UC3);
+        canvas.setTo(cv::Vec3b(0, 0, 0));
+        
+        // Draw EROS representation
+        drawEROS(canvas);
+        
+        // Draw detected skeleton (with validation to prevent OpenCV errors)
+        if (hpecore::poseNonZero(detected_pose.pose)) {
             try {
-                current_pose.pose = hpecore::extractSkeletonFromYARP<Bottle>(*detection);
-                current_pose.conf = hpecore::extractConfidenceFromYARP<Bottle>(*detection);
-                current_pose.timestamp = movenet_request_time;
-                current_pose.delay = current_time - movenet_request_time;
-            } catch (const std::exception& e) {
-                yWarning() << "Failed to parse detection:" << e.what();
+                hpecore::drawSkeleton(canvas, detected_pose, {0, 0, 255}, 3, c_thresh);
+            } catch (const cv::Exception& e) {
+                // Silently skip drawing if OpenCV throws an error (invalid pose coordinates)
+                // This can happen if pose detection returns out-of-bounds or invalid values
             }
         }
-
-        // Estimate velocities if we have a valid pose
-        if (hpecore::poseNonZero(current_pose.pose)) {
-            // The multi_area_velocity returns skeleton13 directly
-            current_velocity = velocity_estimator.multi_area_velocity(
-                sae_handler.getSurface(),
-                current_time,
-                current_pose.pose,
-                roiSize
-            );
+        
+        // Always write frame to video file
+        if (video_writer.isOpened()) {
+            video_writer.write(canvas);
         }
-
-        // Save results
-        saveResults();
-
-        // Visualize
-        if (visualize || save_video) {
-            visualizeResults();
+        
+        // Display frame only if visualization is enabled
+        if (is_visualize) {
+            cv::imshow("moveenet-flow", canvas);
+            char key_pressed = cv::waitKey(1);
+            if (key_pressed == '\e' || key_pressed == 'q') {
+                yInfo() << "User requested stop";
+                return false;
+            }
         }
-
-        // Progress indicator
-        static int last_progress = -1;
-        int progress = (int)(100.0 * current_time / end_time);
-        if (progress != last_progress && progress % 5 == 0) {
-            yInfo() << "Progress:" << progress << "%";
-            last_progress = progress;
-        }
-
+        
+        // Clear binary events surface for next frame
+        binary_handler.getSurface().setTo(0.0);
+        
         return true;
     }
 
-private:
-    void sendEROSToMoveEnet()
-    {
-        cv::Mat eros_surface = eros_handler.getSurface();
-        cv::Mat eros8;
-        eros_surface.convertTo(eros8, CV_8U);
-        cv::GaussianBlur(eros8, eros8, cv::Size(5, 5), 0, 0);
-        
-        ImageOf<PixelMono> &img = movenet_output_port.prepare();
-        img.copy(yarp::cv::fromCvMat<PixelMono>(eros8));
-        movenet_output_port.write();  // Use regular write() like edpr-april.cpp
-    }
-
-    void saveResults()
-    {
-        if (!save_csv || !csv_file.is_open())
-            return;
-
-        csv_file << std::fixed << std::setprecision(6) << current_time;
-        csv_file << "," << std::scientific << current_pose.delay << std::fixed;
-        
-        for (int i = 0; i < 13; i++) {
-            csv_file << "," << std::setprecision(2) 
-                     << current_pose.pose[i].u << "," << current_pose.pose[i].v
-                     << "," << std::setprecision(4) << current_pose.conf[i]
-                     << "," << std::setprecision(2)
-                     << current_velocity[i].u << "," << current_velocity[i].v;
-        }
-        csv_file << "\n";
-    }
-
-    void visualizeResults()
-    {
-        cv::Mat canvas = cv::Mat(image_size, CV_8UC3);
-        canvas.setTo(cv::Vec3b(0, 0, 0));
-
-        // Draw EROS background
-        cv::Mat eros8;
-        eros_handler.getSurface().convertTo(eros8, CV_8U);
-        cv::GaussianBlur(eros8, eros8, {9, 9}, 0);
-        cv::cvtColor(eros8, eros8, cv::COLOR_GRAY2BGR);
-        cv::addWeighted(canvas, 0.5, eros8, 0.5, 0, canvas);
-
-        // Draw skeleton if valid
-        if (hpecore::poseNonZero(current_pose.pose)) {
-            hpecore::drawSkeleton(canvas, current_pose, {0, 0, 255}, 3, c_thresh);
-            
-            // Draw velocity vectors
-            hpecore::drawVel(canvas, current_pose, current_velocity, {0, 255, 255}, 2, c_thresh);
-        }
-
-        // Draw progress bar
-        hpecore::drawProgressBar(canvas, current_time / end_time);
-
-        // Add timestamp text
-        std::string time_text = "Time: " + std::to_string(current_time) + "s";
-        cv::putText(canvas, time_text, cv::Point(10, 30), 
-                    cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(255, 255, 255), 2);
-
-        // Show or save
-        if (visualize) {
-            cv::imshow("Offline HPE", canvas);
-            cv::waitKey(1);
-        }
-
-        if (save_video) {
-            video_writer.write(canvas);
-        }
-    }
 };
+
 
 int main(int argc, char *argv[]) {
     /* prepare and configure the resource finder */
@@ -467,6 +438,6 @@ int main(int argc, char *argv[]) {
     rf.configure(argc, argv);
 
     /* create the module */
-    MOVENET_FLOW instance;
-    return instance.runModule(rf);
+    MOVEENET_FLOW instance;
+    return instance.runModule(rf);          // This calls: updateModule() loop -> close()
 }
