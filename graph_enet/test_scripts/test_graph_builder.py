@@ -14,7 +14,7 @@ res = (640, 480)
 dt = 0.01
 
 # === Load events from log file ===
-log_path = "/home/dberretta-iit.local/data/cam2_S1_Directions/ch0dvs"
+log_path = "/home/dberretta-iit.local/data/new_scarfGNN_full/raw/cam2_S1_Directions/ch0dvs"
 events = load_events_from_log(log_path)
 
 # === Init SCARF ===

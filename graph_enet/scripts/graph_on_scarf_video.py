@@ -15,7 +15,7 @@ res = (640, 480)
 dt = 0.01
 
 # === Load events ===
-events = load_events_from_log("/home/dberretta-iit.local/data/cam2_S1_Directions/ch0dvs/")
+events = load_events_from_log("/home/dberretta-iit.local/data/new_scarfGNN_full/raw/cam2_S1_Directions/ch0dvs/")
 N = len(events)
 print(f"[INFO] Loaded {N} events — Duration: {events['ts'][-1]:.2f}s")
 
@@ -23,8 +23,8 @@ print(f"[INFO] Loaded {N} events — Duration: {events['ts'][-1]:.2f}s")
 scarf = SCARF(res, rf_size, alpha, C)
 
 # === Init Salt&Pepper filter ===
-filter = SpatialFilter()
-filter.initialise(res[1], res[0], period=0.1, spatial_range=1)
+#filter = SpatialFilter()
+#filter.initialise(res[1], res[0], period=0.1, spatial_range=1)
 
 # === Initialize Video Writer ===
 output_path = "/home/dberretta-iit.local/data/graph_construction/graph_on_scarf_slt_ppr.mp4"
@@ -46,7 +46,7 @@ while timer < events['ts'][-1]:
 
     for ev in batch:
         # Salt and Pepper noise removal
-         if filter.check(ev['x'], ev['y'], ev['pol'], ev['ts']):
+         #if filter.check(ev['x'], ev['y'], ev['pol'], ev['ts']):
             scarf.update(ev['x'], ev['y'], ev['pol'])
 
     # === Get SCARF grayscale image ===

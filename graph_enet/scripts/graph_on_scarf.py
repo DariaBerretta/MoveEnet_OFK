@@ -15,7 +15,7 @@ res = (640, 480)
 dt = 0.01
 
 # === Load events ===
-events = load_events_from_log("/home/dberretta-iit.local/data/cam2_S1_Directions/ch0dvs/")
+events = load_events_from_log("//home/dberretta-iit.local/data/new_scarfGNN_full/raw/cam2_S1_Directions/ch0dvs/")
 N = len(events)
 print(f"[INFO] Loaded {N} events — Duration: {events['ts'][-1]:.2f}s")
 

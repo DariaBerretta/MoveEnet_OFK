@@ -10,7 +10,8 @@ from torch_geometric.data import Data
 
 
 
-def build_scarf_graph(scarf, current_skeleton, k_neighbour=4, active_ratio=0.15, radius=25):
+#def build_scarf_graph(scarf, current_skeleton, k_neighbour=4, active_ratio=0.15, radius=25):
+def build_scarf_graph(scarf, k_neighbour=4, active_ratio=0.15, radius=25):   
     
     active_rfs = scarf.get_active_RF(active_ratio)
     
@@ -73,15 +74,15 @@ def build_scarf_graph(scarf, current_skeleton, k_neighbour=4, active_ratio=0.15,
     edge_index = radius_graph(x=positions, r=radius, max_num_neighbors=k_neighbour, loop=False)
 
     # Ensure y is correct shape and type
-    y = torch.tensor(current_skeleton, dtype=torch.float32).unsqueeze(0)
+    # y = torch.tensor(current_skeleton, dtype=torch.float32).unsqueeze(0)
     # Compute th_pck (example: distance between joint 2 and 9)
-    kp = y.reshape(-1, 2)
-    th_pck = torch.norm(kp[2] - kp[9]).unsqueeze(0)
+    # kp = y.reshape(-1, 2)
+    # th_pck = torch.norm(kp[2] - kp[9]).unsqueeze(0)
 
     # Graph creation
     graph = Data(x = nodes, edge_index = edge_index, pos=positions)
-    graph.y = y
-    graph.th_pck = th_pck
+    # graph.y = y
+    # graph.th_pck = th_pck
 
     return graph
 
