@@ -37,7 +37,7 @@ def setup_training(cfg):
     """Setup dataset, model, and trainer."""
     
     print("="*60)
-    print("IMPROVED GRAPHENET-V2 TRAINING")
+    print("GRAPHENET-V2 TRAINING")
     print("="*60)
     print(f"Configuration:")
     for key, value in cfg.items():
@@ -64,7 +64,7 @@ def setup_training(cfg):
     print(f"Total dataset size: {len(dataset)}")
     
     # Split dataset
-    train_dataset, val_dataset,_ = new_dataset_split(
+    train_dataset, val_dataset = new_dataset_split(
         dataset,
         style=cfg['dataset_split'], 
         fraction=cfg['data_fraction'], 
@@ -87,14 +87,14 @@ def setup_training(cfg):
         batch_size=cfg['batch_size'], 
         shuffle=True, 
         num_workers=2,
-        # persistent_workers=True
+        persistent_workers=True
     )
     
     val_loader = DataLoader(
         val_dataset, 
         batch_size=cfg['batch_size'],  
         num_workers=2,
-        # persistent_workers=True
+        persistent_workers=True
     )
     
     print("DataLoaders created")
@@ -153,16 +153,18 @@ def setup_training(cfg):
         
         # Trainer with improved settings
         trainer = pl.Trainer(
-            max_epochs=cfg['epochs'], 
-            check_val_every_n_epoch=5,  # More frequent validation
+            max_epochs=cfg['epochs'],
+            check_val_every_n_epoch=5,
             callbacks=[MyProgressBar(), early_stop_callback], 
             logger=logger, 
-            min_epochs=int(cfg['epochs']/4),  # Minimum 25% of epochs
-            gradient_clip_val=1.0,  # Gradient clipping to prevent exploding gradients
-            accumulate_grad_batches=1,  # No gradient accumulation
-            log_every_n_steps=10,  # More frequent logging
+            min_epochs=int(cfg['epochs']/2),  # Minimum 50% of epochs
+            # gradient_clip_val=1.0,  # Gradient clipping to prevent exploding gradients
+            # accumulate_grad_batches=1,  # No gradient accumulation
+            # log_every_n_steps=10,  # More frequent logging
             enable_checkpointing=True,
-            val_check_interval=0.5  # Validate twice per epoch
+            #val_check_interval=0.5  # Validate twice per epoch
+            accelerator='gpu' if torch.cuda.is_available() else 'cpu',
+            devices=1 if torch.cuda.is_available() else None
         )
         
         # Create log directory and save config
