@@ -1,6 +1,6 @@
 # GraphEnet-v2
 
-This repository contains the code for the GraphEnet-v2 model, an advanced graph neural network architecture designed for human pose estimation tasks. The model leverages the power of graph convolutions to effectively capture spatial relationships between body joints.
+This repository contains the code for the GraphEnet-v2 model, an advanced graph neural network architecture designed for human pose estimation tasks.
 
 ## Getting Started
 To get started with the GraphEnet-v2 model, follow these steps:
