@@ -90,9 +90,9 @@ def build_scarf_graph_splineConv(
 
     # Ensure y is correct shape and type - move to GPU
     y = torch.tensor(current_skeleton, dtype=torch.float32, device=device).unsqueeze(0)
-    # Compute th_pck (distance between joint 2 and 9) - GPU accelerated
+    # Compute th_pck (distance between joint 2 and 6) - GPU accelerated
     kp = y.reshape(-1, 2)
-    th_pck = torch.norm(kp[2] - kp[9]).unsqueeze(0)
+    th_pck = torch.norm(kp[2] - kp[6]).unsqueeze(0)
 
     # Graph creation
     graph = Data(x = nodes, edge_index = edge_index, pos=positions)
