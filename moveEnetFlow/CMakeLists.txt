@@ -22,7 +22,25 @@ target_link_libraries(moveEnet_flow
     hpe-core::hpe-core
 )
 
+# Build moveEnet_flow_batch executable (batch processing multiple log files)
+add_executable(moveEnet_flow_batch moveEnet_flow_read_fullDataset.cpp)
+target_link_libraries(moveEnet_flow_batch
+    ${YARP_LIBRARIES}
+    ${OpenCV_LIBS}
+    ev::event-driven
+    hpe-core::hpe-core
+)
+
+# Build moveEnet_flowKalman executable (batch processing multiple log files)
+add_executable(moveEnet_flowKalman moveEnet_flowKalman.cpp)
+target_link_libraries(moveEnet_flowKalman
+    ${YARP_LIBRARIES}
+    ${OpenCV_LIBS}
+    ev::event-driven
+    hpe-core::hpe-core
+)
+
 # Installation
-install(TARGETS moveEnet_flow
+install(TARGETS moveEnet_flow moveEnet_flow_batch
     RUNTIME DESTINATION bin
 )

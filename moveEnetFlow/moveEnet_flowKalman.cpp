@@ -4,18 +4,18 @@
  * This system processes event data from .log files offline to:
  * 1. Generate event representations (EROS, SAE, Binary)
  * 2. Detect human poses using MoveEnet
- * 3. Estimate joint velocities
+ * 3. Estimate joint velocities using Kalman filter fusion (like edpr-april.cpp)
  * 4. Save results to CSV and video
-
-
-
-    BEFORE TO OPEN THE DOCKER REMBER TO:
-    1. xhost +local:docker
-    In the folder where the docker-compose.yml is located, run:
-    2. docker compose up
-    3. docker exec -it moveEnet_flow sh
-    Start yarp server: 
-    4. yarpserver &
+ *
+ * Key differences from moveEnet_flow.cpp:
+ * - Implements Kalman filter (multiJointLatComp state) for optical flow fusion
+ * - Velocities are used for pose prediction and smoothing, not just logging
+ * - More robust optical flow estimation through temporal filtering
+ *
+ * BEFORE TO OPEN THE DOCKER REMBER TO:
+ * 1. xhost +local:docker
+ * 2. docker exec -it moveEnet_flow sh
+ * 3. start yarp server: yarpserver &
  */
 
 #include <yarp/cv/Cv.h>
@@ -98,7 +98,7 @@ public:
     }
 };
 
-class MOVEENET_FLOW : public RFModule
+class MOVEENET_FLOW_KALMAN : public RFModule
 {
     private:
 
@@ -124,6 +124,9 @@ class MOVEENET_FLOW : public RFModule
         // Velocity estimation
         hpecore::pwtripletvelocity velocity_estimator;
 
+        // Kalman filter for pose state fusion
+        hpecore::multiJointLatComp state;
+
         // standard parameters
         cv::Size image_size;
         int roiSize{20};
@@ -131,6 +134,13 @@ class MOVEENET_FLOW : public RFModule
         double th_period{0.01}, thF{100.0};
         double c_thresh{0.4};
         bool is_visualize{false};
+        
+        // Kalman filter parameters
+        double procU{1e-1};          // Process uncertainty (pu)
+        double measUD{1e-4};         // Measurement uncertainty (position)
+        double measUV{0.0};          // Measurement uncertainty (velocity)
+        bool latency_compensation{true};
+        
         cv::Scalar colors[13] = {{0, 0, 180}, {0, 180, 0}, {0, 0, 180},
                         {180, 180, 0}, {180, 0, 180}, {0, 180, 180},
                         {120, 0, 180}, {120, 180, 0}, {0, 120, 180},
@@ -153,6 +163,10 @@ class MOVEENET_FLOW : public RFModule
                 yInfo() << "--output_csv <string>: path to output csv file for joint positions and velocities";
                 yInfo() << "--output_video <string>: path to output video file";
                 yInfo() << "--vis: flag to enable visualization, if not set no display is shown";
+                yInfo() << "--pu <float>: Kalman filter process uncertainty (default 1e-1)";
+                yInfo() << "--muD <float>: Kalman filter measurement uncertainty position (default 1e-4)";
+                yInfo() << "--muV <float>: Kalman filter measurement uncertainty velocity (default 0.0)";
+                yInfo() << "--use_lc: enable latency compensation in Kalman filter (default false)";
                 return false;
             }
 
@@ -164,15 +178,21 @@ class MOVEENET_FLOW : public RFModule
             }
 
             // 3. Set up module name
-            setName((rf.check("name", Value("/moveenet_flow")).asString()).c_str());
+            setName((rf.check("name", Value("/moveenet_flow_kalman")).asString()).c_str());
 
             // 4. Read parameters from command line
             detF = rf.check("f_det", Value(10)).asInt32();
             double visF = rf.check("f_vis", Value(100.0)).asFloat64();
             std::string log_path = rf.check("log_path", Value("/data/new_scarfGNN_full/raw/cam2_S1_Discussion/ch0dvs/data.log")).asString();
-            std::string output_csv = rf.check("output_csv", Value("/home/moveEnetFlow/csv_file/251112_test1.csv")).asString();
-            std::string output_video = rf.check("output_video", Value("/home/moveEnetFlow/avi_file/251112_test1.avi")).asString();
+            std::string output_csv = rf.check("output_csv", Value("/home/moveEnetFlow/csv_file/251112_test_kalman.csv")).asString();
+            std::string output_video = rf.check("output_video", Value("/home/moveEnetFlow/avi_file/251112_test_kalman.avi")).asString();
             is_visualize = rf.check("vis");
+            
+            // Read Kalman filter parameters
+            procU = rf.check("pu", Value(1e-1)).asFloat64();
+            measUD = rf.check("muD", Value(1e-4)).asFloat64();
+            measUV = rf.check("muV", Value(0.0)).asFloat64();
+            latency_compensation = rf.check("use_lc", Value(false)).asBool();
             
             yInfo() << "Configuration:";
             yInfo() << "  - Log path: " << log_path;
@@ -180,7 +200,11 @@ class MOVEENET_FLOW : public RFModule
             yInfo() << "  - Output video: " << output_video;
             yInfo() << "  - Visualization: " << (is_visualize ? "ENABLED" : "DISABLED");
             yInfo() << "  - Detection freq: " << detF << " Hz";
-            yInfo() << "  - Visualization freq: " << visF << " Hz"; 
+            yInfo() << "  - Visualization freq: " << visF << " Hz";
+            yInfo() << "  - Kalman process uncertainty: " << procU;
+            yInfo() << "  - Kalman measurement uncertainty (pos): " << measUD;
+            yInfo() << "  - Kalman measurement uncertainty (vel): " << measUV;
+            yInfo() << "  - Latency compensation: " << (latency_compensation ? "ENABLED" : "DISABLED");
 
             // 5. Initialize internal parameters
             
@@ -199,8 +223,16 @@ class MOVEENET_FLOW : public RFModule
             binary_handler.init(image_size.width, image_size.height);
             sae_handler.init(image_size.width, image_size.height);
 
+            // Initialize Kalman filter state
+            double lc = latency_compensation ? 1.0 : 0.0;
+            if (!state.initialise({procU, measUD, measUV, lc}))
+            {
+                yError() << "Kalman filter (multiJointLatComp) initialization failed";
+                return false;
+            }
+
             // 6. Start of moveEnet flow process
-            yInfo() << "Starting MoveEnet flow process...";
+            yInfo() << "Starting MoveEnet flow process with Kalman filter...";
             std::string command = "python3 /usr/local/src/hpe-core/example/movenet/movenet_online.py --checkpoint_path " + checkpoint_path + " &";
             system(command.c_str());
 
@@ -227,24 +259,21 @@ class MOVEENET_FLOW : public RFModule
 
             // 9. Initialize visualization window if requested
             if (is_visualize) {
-                cv::namedWindow("moveenet-flow", cv::WINDOW_NORMAL);
-                cv::resizeWindow("moveenet-flow", image_size);
+                cv::namedWindow("moveenet-flow-kalman", cv::WINDOW_NORMAL);
+                cv::resizeWindow("moveenet-flow-kalman", image_size);
                 yInfo() << "Visualization window created";
             }
 
-            // 9. Initialize MoveEnet detection handler
+            // 10. Initialize MoveEnet detection handler
             if (!mn_handler.init(getName("/eros:o"), getName("/movenet:i"), detF))
             {
                 yError() << "Could not open movenet ports";
                 return false;
             }
 
-            // 10. Connect MoveEnet ports
+            // 11. Connect MoveEnet ports
             Network::connect("/movenet/sklt:o", getName("/movenet:i"), "fast_tcp");
             Network::connect(getName("/eros:o"), "/movenet/img:i", "fast_tcp");
-
-            // 11. Initialize velocity estimator
-            // velocity_estimator doesn't need explicit initialization
 
             // 12. Initialize offline event loader from .log file
             if (!eloader.load(log_path)) {
@@ -325,7 +354,6 @@ class MOVEENET_FLOW : public RFModule
         double maxval;
         cv::minMaxLoc(sae64, nullptr, &maxval);
         sae64 -= (maxval - 1.0);  //show 2 seconds of surface
-        //cv::threshold(sae64, sae64, 0, 0, cv::THRESH_BINARY);
         sae64.convertTo(saemono, CV_8U, 255.0);
         cv::cvtColor(saemono, img, CV_GRAY2BGR);
     }
@@ -334,7 +362,7 @@ class MOVEENET_FLOW : public RFModule
     {
         // ===== STEP 1: LOAD AND PROCESS EVENTS =====
         static double tnow = 0.0;
-        static double pts = 0.0;
+        static double pts = 0.0;    // previous timestamp
         static int batch_count = 0;
         double period = getPeriod();
         
@@ -347,7 +375,8 @@ class MOVEENET_FLOW : public RFModule
             sae_handler.getSurface().setTo(0.0);
             binary_handler.getSurface().setTo(0.0);
             eros_handler.getSurface().setTo(0.0);
-            yInfo() << "Event stream reset detected";
+            state.reset();  // Reset Kalman filter state on timeline reset
+            yInfo() << "Event stream reset detected - Kalman filter state reset";
         }
         
         // Process all events in this time window
@@ -376,16 +405,59 @@ class MOVEENET_FLOW : public RFModule
         // ===== STEP 2: POSE DETECTION WITH MOVENET =====
         bool was_detected = mn_handler.update(eros_handler.getSurface(), tnow, detected_pose);
         
-        // ===== STEP 3: VELOCITY ESTIMATION =====
-        if (was_detected && hpecore::poseNonZero(detected_pose.pose)) {
-            // Estimate velocities using SAE surface
-            auto jvs = velocity_estimator.multi_area_velocity(sae_handler.getSurface(), tnow, detected_pose.pose, roiSize);
+        // ===== STEP 3: KALMAN FILTER FUSION =====
+        if (was_detected && hpecore::poseNonZero(detected_pose.pose))
+        {
+            // Update Kalman filter with detected pose (correction step)
+            if (state.poseIsInitialised())
+                state.updateFromPosition(detected_pose.pose, detected_pose.timestamp);
+            else
+                state.set(detected_pose.pose, tnow);
+        }
+        
+        // ===== STEP 4: VELOCITY ESTIMATION WITH OPTICAL FLOW =====
+        hpecore::skeleton13 jvs;  // Joint velocities
+        hpecore::skeleton13 filtered_pose;  // Pose from Kalman filter
+        
+        if (state.poseIsInitialised())
+        {
+            // Estimate velocities from SAE surface using current filtered pose
+            jvs = velocity_estimator.multi_area_velocity(sae_handler.getSurface(), tnow, state.query(), roiSize);
             
-            // ===== STEP 4: SAVE RESULTS TO CSV =====
+            // Update Kalman filter with velocity (prediction step with optical flow)
+            state.setVelocity(jvs);
+            state.updateFromVelocity(jvs, tnow);
+            
+            // Get the filtered pose from Kalman filter
+            filtered_pose = state.query();
+        }
+        else
+        {
+            // If Kalman filter not yet initialized, use detected pose as-is
+            filtered_pose = detected_pose.pose;
+        }
+        
+        
+        /* // Debug: Compute maximum difference between detected and filtered pose
+        if (state.poseIsInitialised() && hpecore::poseNonZero(detected_pose.pose)) {
+            double max_diff = 0.0;
+            for (int j = 0; j < 13; j++) {
+                double dx = detected_pose.pose[j].u - filtered_pose[j].u;
+                double dy = detected_pose.pose[j].v - filtered_pose[j].v;
+                double diff = sqrt(dx*dx + dy*dy);
+                if (diff > max_diff) max_diff = diff;
+            }
+            yInfo() << "Max pose difference (detected vs filtered): " << max_diff << " pixels";
+        }
+        */
+        
+        // ===== STEP 5: SAVE RESULTS TO CSV =====
+        if (state.poseIsInitialised())
+        {
             csv_file << std::fixed << std::setprecision(6) << tnow;
             for (int j = 0; j < 13; j++) {
-                csv_file << "," << detected_pose.pose[j].u 
-                        << "," << detected_pose.pose[j].v
+                csv_file << "," << filtered_pose[j].u 
+                        << "," << filtered_pose[j].v
                         << "," << jvs[j].u
                         << "," << jvs[j].v
                         << "," << detected_pose.conf[j];
@@ -394,20 +466,40 @@ class MOVEENET_FLOW : public RFModule
             csv_file.flush();  // Ensure data is written to disk
         }
         
-        // ===== STEP 5: VISUALIZATION AND VIDEO WRITING =====
+        // ===== STEP 6: VISUALIZATION AND VIDEO WRITING =====
         static cv::Mat canvas = cv::Mat(image_size, CV_8UC3);
         canvas.setTo(cv::Vec3b(0, 0, 0));
         
         // Draw EROS representation
         drawEROS(canvas);
         
-        // Draw detected skeleton (with validation to prevent OpenCV errors)
+        // Debug: Check drawing conditions
+        
+        // Draw detected skeleton (raw detection in blue)
         if (hpecore::poseNonZero(detected_pose.pose)) {
             try {
-                hpecore::drawSkeleton(canvas, detected_pose, {0, 0, 255}, 3, c_thresh);
+                hpecore::stampedPose pose_raw = detected_pose;
+                hpecore::drawSkeleton(canvas, pose_raw, {255, 0, 0}, 2, c_thresh);  // Blue in display (BGR)
             } catch (const cv::Exception& e) {
-                // Silently skip drawing if OpenCV throws an error (invalid pose coordinates)
-                // This can happen if pose detection returns out-of-bounds or invalid values
+                // Silently skip drawing if OpenCV throws an error
+            }
+        }
+        
+        // Draw filtered skeleton from Kalman filter (red)
+        if (state.poseIsInitialised()) {
+            try {
+                hpecore::stampedPose pose_filtered;
+                pose_filtered.pose = state.query();
+                pose_filtered.timestamp = tnow;
+                hpecore::drawSkeleton(canvas, pose_filtered, {0, 0, 255}, 3, c_thresh);  // Red in display (BGR)
+                // Optionally draw velocity vectors (green)
+                hpecore::skeleton13 vel = state.queryVelocity();
+                hpecore::stampedPose pose_with_vel;
+                pose_with_vel.pose = state.query();
+                pose_with_vel.timestamp = tnow;
+                hpecore::drawVel(canvas, pose_with_vel, vel, {0, 255, 0}, 2, c_thresh);  // Green = velocity
+            } catch (const cv::Exception& e) {
+                // Silently skip drawing if OpenCV throws an error
             }
         }
         
@@ -418,7 +510,7 @@ class MOVEENET_FLOW : public RFModule
         
         // Display frame only if visualization is enabled
         if (is_visualize) {
-            cv::imshow("moveenet-flow", canvas);
+            cv::imshow("moveenet-flow-kalman", canvas);
             char key_pressed = cv::waitKey(1);
             if (key_pressed == '\e' || key_pressed == 'q') {
                 yInfo() << "User requested stop";
@@ -442,6 +534,6 @@ int main(int argc, char *argv[]) {
     rf.configure(argc, argv);
 
     /* create the module */
-    MOVEENET_FLOW instance;
+    MOVEENET_FLOW_KALMAN instance;
     return instance.runModule(rf);          // This calls: updateModule() loop -> close()
 }
