@@ -55,13 +55,13 @@ def new_dataset_split(dataset, style=None, fraction=None, dataset_label='dev'):
     if style == 'dev':
         fraction = fraction
         dataset_size = len(dataset)
-        total_items = int(dataset_size * fraction)
+        total_items = int(dataset_size * fraction)      # the actual number of items to consider 
         
         # 80/10/10 split
         train_end = int(total_items * 0.8)
-        val_end = int(total_items * 0.9)
+        val_end = int(total_items)
         
-        print(f"Splitting dataset into {train_end}/{val_end-train_end}/{total_items-val_end} samples...")
+        print(f"Splitting dataset into {train_end}/{val_end-train_end} samples...")
         
         # Fast sequential slicing
         # Train split
@@ -69,13 +69,10 @@ def new_dataset_split(dataset, style=None, fraction=None, dataset_label='dev'):
         
         # Val split
         val_dataset = [dataset[i] for i in range(train_end, val_end)]
-        
-        # Test split
-        test_dataset = [dataset[i] for i in range(val_end, total_items)]
 
-        print(f"Dataset split complete: {len(train_dataset)}/{len(val_dataset)}/{len(test_dataset)} (train/val/test)")
+        print(f"Dataset split complete: {len(train_dataset)}/{len(val_dataset)} (train/val)")
 
-    return train_dataset, val_dataset, test_dataset
+    return train_dataset, val_dataset
 
 def check_y_values(dataset):
     count = 0
