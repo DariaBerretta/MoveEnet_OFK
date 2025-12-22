@@ -12,11 +12,36 @@ import numpy as np
 import re
 
 class scarfDataset_splineConv(Dataset):
-    def __init__(self, root, transform=None, pre_transform=None, pre_filter=None,
-                 rf_size = 14, 
-                 alpha = 1.0, 
-                 C = 0.3,
-                 res = (640, 480)):
+    def __init__(
+            
+            self, 
+            root, 
+            transform=None, pre_transform=None, pre_filter=None,
+            rf_size = 14, 
+            alpha = 1.0, 
+            C = 0.3,
+            res = (640, 480)):
+        
+        """
+        This initializer sets up the dataset configuration parameters before calling
+        the parent class initialization.
+        Args:
+            root (str): Root directory where the dataset files are stored.
+            transform (callable, optional): A function/transform that takes in
+                a Data object and returns a transformed version. Default is None.
+            pre_transform (callable, optional): A function/transform that pre-processes
+                the raw data and saves it. Default is None.
+            pre_filter (callable, optional): A function/transform that filters out
+                data samples before processing. Default is None.
+            rf_size (int, optional): Receptive field size for the graph construction.
+                Default is 14.
+            alpha (float, optional): Alpha parameter for spline convolution scaling.
+                Default is 1.0.
+            C (float, optional): Compression or clipping parameter. Default is 0.3.
+            res (tuple, optional): Resolution (width, height) of the input data.
+                Default is (640, 480).
+        """
+        
        
         self.rf_size = rf_size
         self.alpha = alpha
@@ -145,7 +170,7 @@ class scarfDataset_splineConv(Dataset):
                 events = load_events_from_log(efolder_path, file_name)
                 sklt_data = load_skeleton_from_log(sfolder_path, file_name)
             
-                # === Init SCARF object ===
+                # === Init SCARF object (for each new file)===
                 scarf = SCARF(self.res, self.rf_size, self.alpha, self.C)
                 N = len(events)
 

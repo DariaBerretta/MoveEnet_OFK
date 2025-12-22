@@ -31,7 +31,7 @@ def build_scarf_graph_splineConv(
     - Edges: radius_graph over positions (x_mean, y_mean) with limit (k_neighbour) on neighbors.
     - edge_attr: (dx, dy) via Cartesian() for SplineConv (dim=2).
     - y: shape [1, 2J] --> where J is the number of joints in the skeleton.
-    - th_pck: torso dimension (distance between joints 2 and 9)
+    - th_pck: torso dimension (distance between joints 2 and 6)
     
     Args:
         device: 'auto', 'cuda', 'cpu', or specific device like 'cuda:0'
@@ -42,30 +42,31 @@ def build_scarf_graph_splineConv(
     
     active_rfs = scarf.get_active_RF(active_ratio)
     
-    # Pre-allocate arrays for better performance
+    # Pre-allocate arrays
     num_rfs = len(active_rfs)
     node_features = np.zeros((num_rfs, 10), dtype=np.float32)
     
-    # Pre-create PCA object to avoid repeated initialization overhead
+    # Pre-create PCA object
     pca = PCA(n_components=2)
     
     # Determine the node features
     for i, rf in enumerate(active_rfs):
         RF_idx, _, events = rf
 
-        # Compute means (vectorized) - use events directly, no need for extra variable
+        # Compute means (vectorized) - use events directly
         x_mean, y_mean = np.mean(events[:, :2], axis=0)
 
-        # PCA - use already created PCA object
+        # PCA computation
         pca.fit(events[:, :2])
 
         v1, v2 = pca.components_
         lambda_1, lambda_2 = pca.explained_variance_
 
         # Avoid unnecessary float() conversions - direct assignment to float32 array
+        # control on lambda_1 = 0 that means no variance (all events at same position)
         eccentricity = np.sqrt(1 - lambda_2/lambda_1) if lambda_1 > 0 else 0.0
 
-        # Direct assignment without creating intermediate list
+        # Feature assignment
         node_features[i, :] = [
             x_mean, y_mean, 
             RF_idx, 
@@ -90,13 +91,14 @@ def build_scarf_graph_splineConv(
 
     # Ensure y is correct shape and type - move to GPU
     y = torch.tensor(current_skeleton, dtype=torch.float32, device=device).unsqueeze(0)
-    # Compute th_pck (distance between joint 2 and 6) - GPU accelerated
+    
+    # Compute th_pck (distance between joint 2 and 6) 
     kp = y.reshape(-1, 2)
     th_pck = torch.norm(kp[2] - kp[6]).unsqueeze(0)
 
     # Graph creation
     graph = Data(x = nodes, edge_index = edge_index, pos=positions)
-    graph = Cartesian(cat=False)(graph)    # edge_attr = (Δx, Δy) in pixel units
+    graph = Cartesian(cat=False)(graph)    # edge_attr = (Δx, Δy) in pixel units normalised [0, 1]  Dose it need norm=False?
     graph.y = y
     graph.th_pck = th_pck
 

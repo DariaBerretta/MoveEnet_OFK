@@ -1,4 +1,27 @@
 from graph_enet.pyScarf.scarf.scarf_class import SCARF
+"""
+Build a geometric graph representation from SCARF receptive fields.
+This function constructs a PyTorch Geometric Data object by extracting active
+receptive fields from a SCARF object and computing node features based on
+spatial and statistical properties. Edges are established using radius-based
+graph construction.
+Args:
+    scarf (SCARF): A SCARF object containing receptive field information.
+    k_neighbour (int, optional): Maximum number of neighbors per node in the
+        radius graph. Defaults to 4.
+    active_ratio (float, optional): Ratio threshold for determining active
+        receptive fields. Defaults to 0.15.
+    radius (float, optional): Radius threshold for edge creation in the
+        radius-based graph construction. Defaults to 25.
+Returns:
+    torch.geometric.data.Data or None: A PyTorch Geometric Data object with:
+        - x (torch.Tensor): Node feature matrix of shape [num_nodes, 10]
+          containing RF index, spatial center (x, y), PCA components,
+          eigenvalues, and eccentricity.
+        - edge_index (torch.Tensor): Edge index tensor defining graph connectivity.
+        - pos (torch.Tensor): Node positions (x, y coordinates) of shape [num_nodes, 2].
+        Returns None if no active receptive fields are found.
+"""
 from sklearn.decomposition import PCA
 import numpy as np
 import torch
@@ -11,16 +34,15 @@ from torch_geometric.data import Data
 
 
 #def build_scarf_graph(scarf, current_skeleton, k_neighbour=4, active_ratio=0.15, radius=25):
-def build_scarf_graph(scarf, k_neighbour=4, active_ratio=0.15, radius=25):   
+def build_scarf_graph(
+          scarf, 
+          k_neighbour=4, 
+          active_ratio=0.15, 
+          radius=25):   
     
     active_rfs = scarf.get_active_RF(active_ratio)
-    
-    # n_active_rfs = len(active_rfs)
-    # n_nodes = len(active_rfs)       
-    # n_features = 10                # RF_index, x_mean, y_mean, PCA_1, PCA_2, Eccentricity
-    
+        
     node_features= []                # List of node features
-
 
     # print(f"[INFO] Number of total RFs: {len(scarf.rfs)}, \n [INFO] Number of active RFs: {n_active_rfs}.")
     
@@ -73,16 +95,9 @@ def build_scarf_graph(scarf, k_neighbour=4, active_ratio=0.15, radius=25):
     # edge_index = radius_graph(x=positions, r=radius, loop=False)
     edge_index = radius_graph(x=positions, r=radius, max_num_neighbors=k_neighbour, loop=False)
 
-    # Ensure y is correct shape and type
-    # y = torch.tensor(current_skeleton, dtype=torch.float32).unsqueeze(0)
-    # Compute th_pck (example: distance between joint 2 and 9)
-    # kp = y.reshape(-1, 2)
-    # th_pck = torch.norm(kp[2] - kp[9]).unsqueeze(0)
 
     # Graph creation
     graph = Data(x = nodes, edge_index = edge_index, pos=positions)
-    # graph.y = y
-    # graph.th_pck = th_pck
 
     return graph
 
