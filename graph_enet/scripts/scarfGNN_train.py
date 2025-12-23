@@ -114,7 +114,7 @@ def setup_training(cfg):
             task=cfg['task'], 
             transforms=None, 
             node_loss_weight=[cfg['target_loss_weight'], cfg['node_loss_weight']],
-            pck_multiplier=0.6
+            pck_multiplier=0.4
         )
     else:  # two_weights
         model = hpeGnn_splineConv(
@@ -128,7 +128,7 @@ def setup_training(cfg):
             task='all', 
             transforms=None, 
             node_loss_weight=[cfg['target_loss_weight'], cfg['node_loss_weight']],
-            pck_multiplier=0.6
+            pck_multiplier=0.4
         )
     
     print(f"Model created: {cfg['arch']} architecture")

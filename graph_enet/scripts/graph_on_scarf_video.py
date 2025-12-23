@@ -1,3 +1,7 @@
+# 23/12/2025 Status: working - Dario Berretta
+# Script to visualize SCARF surface with overlaid graph structure and save to video. No real-time display.
+# Uses Salt & Pepper noise filter to improve graph quality. If you dont want to use it commment the related lines.
+
 import cv2
 import numpy as np
 import networkx as nx
@@ -23,8 +27,8 @@ print(f"[INFO] Loaded {N} events — Duration: {events['ts'][-1]:.2f}s")
 scarf = SCARF(res, rf_size, alpha, C)
 
 # === Init Salt&Pepper filter ===
-#filter = SpatialFilter()
-#filter.initialise(res[1], res[0], period=0.1, spatial_range=1)
+filter = SpatialFilter()
+filter.initialise(res[1], res[0], period=0.1, spatial_range=1)
 
 # === Initialize Video Writer ===
 output_path = "/home/dberretta-iit.local/data/graph_construction/graph_on_scarf_slt_ppr.mp4"

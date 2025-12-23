@@ -1,3 +1,7 @@
+# 23/12/2025 Status: working - Dario Berretta
+# Script to visualize SCARF surface with overlaid graph structure in real-time.
+# Uses Salt & Pepper noise filter to improve graph quality. If you dont want to use it commment the related lines.
+
 import cv2
 import numpy as np
 import networkx as nx
