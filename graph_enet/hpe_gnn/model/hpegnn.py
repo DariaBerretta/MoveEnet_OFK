@@ -688,10 +688,10 @@ class hpeGnn_splineConv_single_weight(hpegnn):
             loss = (self.node_loss_weight[0]*target_loss) + (self.node_loss_weight[1]*node_loss)
         else:
             loss = node_loss + target_loss
-        pck = pck_error(y, out, data.th_pck, self.pck_multiplier)
-        mpjpe = mpjpe_error(y, out)
-        # pck = pck_error(out, y, data.th_pck, self.pck_multiplier)
-        # mpjpe = mpjpe_error(out, y)
+        # pck = pck_error(y, out, data.th_pck, self.pck_multiplier)                     # Inverted arguments y and out
+        # mpjpe = mpjpe_error(y, out)                                                   # Inverted arguments y and out
+        pck = pck_error(out, y, data.th_pck, self.pck_multiplier)
+        mpjpe = mpjpe_error(out, y)
         return loss, pck, mpjpe
 
     def forward(self, x_in, edge_index, edge_attr=None, pos=None, batch=None):
@@ -704,11 +704,11 @@ class hpeGnn_splineConv_single_weight(hpegnn):
         self.image_size = self.image_size.to(self.device)
         # x = x[:, None]
         x = torch.clone(x_in)
-        for layer in self.children():
+        for layer in self.children():                           # iterate through all SplineConv layers, here all the parameters of the nodes are used and updated
             x = layer(x, edge_index, edge_attr)
         x = self.custom_softmax(x, index=batch)
         x = self.custom_sigmoid(x, index=batch)
         # x = self.selective_pooling(x, index = batch)
         # x = self.custom_softmax_last(x, index=batch)
-        x_out = self.custom_vect_dot_single_weight_vector(x, x_in[:, 0:2], batch)
+        x_out = self.custom_vect_dot_single_weight_vector(x, x_in[:, 0:2], batch)           # to predict the final 2D co-ordinates only the coordinate vectors params are used
         return x_out, x
