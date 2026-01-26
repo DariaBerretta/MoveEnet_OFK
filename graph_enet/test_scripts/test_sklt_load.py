@@ -1,4 +1,5 @@
-# 31/10/2025: CODE WORKING
+# 31/10/2025 Status: working - Daniele Berretta
+# Test script to load skeleton data and synchronize with event data using SCARF representation.
 
 import sys
 import os
