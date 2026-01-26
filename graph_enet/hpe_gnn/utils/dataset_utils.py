@@ -46,32 +46,55 @@ def dataset_split(dataset, style= None, fraction = None, dataset_label = 'h36m')
     return train_dataset, val_dataset
 
 def new_dataset_split(dataset, style=None, fraction=None, dataset_label='dev'):
+    
     if style is None:
         print('Dataset split unclear. Please define. Exiting.')
         exit()
-    if fraction is None:
-        fraction = 1
-
-    if style == 'dev':
-        fraction = fraction
+    
+    if style in ['total', 'dev']:
+        if style == 'total':
+            fraction = 1
+        # fraction is already passed for 'dev'
         dataset_size = len(dataset)
-        total_items = int(dataset_size * fraction)      # the actual number of items to consider 
+        total_items = int(dataset_size * fraction)
         
-        # 80/10/10 split
+        # 80/20 split
         train_end = int(total_items * 0.8)
         val_end = int(total_items)
         
         print(f"Splitting dataset into {train_end}/{val_end-train_end} samples...")
         
-        # Fast sequential slicing
         # Train split
-        train_dataset = [dataset[i] for i in range(train_end)]
+        # train_dataset = [dataset[i] for i in range(train_end)]
+        train_dataset = dataset[:train_end]
         
         # Val split
-        val_dataset = [dataset[i] for i in range(train_end, val_end)]
-
+        # val_dataset = [dataset[i] for i in range(train_end, val_end)]
+        val_dataset = dataset[train_end:val_end]
+        
         print(f"Dataset split complete: {len(train_dataset)}/{len(val_dataset)} (train/val)")
 
+    
+    # TO DO: verify this part
+    # if style == 'subject':
+    #     if dataset_label == 'h36m':
+    #         train_set = h36m.SPLITS['train']
+    #     #elif dataset_label == 'dhp19':
+    #     #    train_set = dhp19.SPLITS['train']
+    #     else:
+    #         print("dataset not correct:", dataset_label)
+    #         exit()
+
+    #     # val_set = h36m.SPLITS['val']
+    #     for i, data in enumerate(dataset):
+    #         if data.sample[1] in train_set:
+    #             train_dataset.append(data)
+    #         else:
+    #             val_dataset.append(data)
+    #     if fraction < 1:
+    #         train_dataset = train_dataset[:int(len(train_dataset)*fraction)]
+    #         val_dataset = val_dataset[:int(len(val_dataset)*fraction)]
+   
     return train_dataset, val_dataset
 
 def check_y_values(dataset):
