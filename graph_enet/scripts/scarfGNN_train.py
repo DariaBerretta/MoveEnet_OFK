@@ -16,12 +16,14 @@ from torch_geometric.loader import DataLoader
 from torch_geometric.transforms import Cartesian
 
 # Import fixed metrics first
-from graph_enet.test_scripts.fixed_metrics import pck_error, mpjpe_error
+from graph_enet.utils.fixed_metrics import pck_error, mpjpe_error
 
 # Monkey patch the metrics module before importing the model
 import graph_enet.hpe_gnn.utils.metrics
 graph_enet.hpe_gnn.utils.metrics.pck_error = pck_error
 graph_enet.hpe_gnn.utils.metrics.mpjpe_error = mpjpe_error
+
+from graph_enet.hpe_gnn.utils.metrics import pck_error, mpjpe_error
 
 from graph_enet.data.scarfDataset_splineConv import scarfDataset_splineConv
 from graph_enet.hpe_gnn.model.hpegnn import hpeGnn_splineConv, hpeGnn_splineConv_single_weight
@@ -109,9 +111,9 @@ def setup_training(cfg):
             num_joints, 
             learning_rate=cfg['learning_rate'],
             batch_size=cfg['batch_size'], 
-            data_fraction=cfg['data_fraction'], 
-            label=cfg['label'],
-            task=cfg['task'], 
+            data_fraction=cfg['data_fraction'],                     # not used inside the model but kept for consistency
+            label=cfg['label'],                                     # not used inside the model but kept for consistency
+            task=cfg['task'],                                       # only 'all' is supported for scarfGNN, kept for consistency
             transforms=None, 
             node_loss_weight=[cfg['target_loss_weight'], cfg['node_loss_weight']],
             pck_multiplier=0.4
@@ -123,9 +125,9 @@ def setup_training(cfg):
             num_joints, 
             learning_rate=cfg['learning_rate'],
             batch_size=cfg['batch_size'], 
-            data_fraction=cfg['data_fraction'], 
-            label=cfg['label'],
-            task='all', 
+            data_fraction=cfg['data_fraction'],                     # not used inside the model but kept for consistency
+            label=cfg['label'],                                     # not used inside the model but kept for consistency
+            task='all',                                             # only 'all' is supported for scarfGNN, kept for consistency
             transforms=None, 
             node_loss_weight=[cfg['target_loss_weight'], cfg['node_loss_weight']],
             pck_multiplier=0.4
@@ -154,7 +156,7 @@ def setup_training(cfg):
         # Trainer with improved settings
         trainer = pl.Trainer(
             max_epochs=cfg['epochs'],
-            check_val_every_n_epoch=5,
+            check_val_every_n_epoch=2,                                  # Validate every 2 epochs
             callbacks=[MyProgressBar(), early_stop_callback], 
             logger=logger, 
             min_epochs=int(cfg['epochs']/2),  # Minimum 50% of epochs
@@ -197,7 +199,8 @@ def main():
                         default=cfg['batch_size'],
                         help='Batch size')
     parser.add_argument('--learning_rate', 
-                        type=float, default=cfg['learning_rate'],
+                        type=float, 
+                        default=cfg['learning_rate'],
                         help='Learning rate')
     parser.add_argument('--data_fraction', 
                         type=float, 
@@ -288,7 +291,7 @@ def main():
         return True
         
     except Exception as e:
-        print(f"❌ Training failed: {e}")
+        print(f"Training failed: {e}")
         import traceback
         traceback.print_exc()
         return False
@@ -296,10 +299,9 @@ def main():
 if __name__ == '__main__':
     success = main()
     if success:
-        print("\n🎉 Training completed successfully!")
-        print("\n📋 Next steps:")
+        print("\n Training completed successfully!")
+        print("\n Next steps:")
         print("1. Check TensorBoard for training progress")
-        print("2. Test the new model with extract_predictions_visualize.py")
-        print("3. Compare results with the previous poor model")
+        print("2. Test the new model with video_visualization.ipynb")
     else:
-        print("\n❌ Training failed. Check the error messages above.")
+        print("\n Training failed.")

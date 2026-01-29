@@ -47,18 +47,18 @@ cfg_SCARF = {
     'dataset': 'scarfDataset_splineConv',
 
     ##### Train Setting
-    'label': 'scarf_dataset_test20251210',     # Label for the experiment (ckpt name)
+    'label': 'scarfGNN_Dataset10percent_test20260126',     # Label for the experiment (ckpt name)
     # 'hidden': '8, 16, 64, 128, 128, 64, 16, 8',
     'hidden': '8, 16, 64, 128, 64, 16, 8',
 
     ##### Train Hyperparameters
-    'learning_rate': 0.01,  # 1.25e-4
+    'learning_rate': 0.001,  # 1.25e-4
     'batch_size': 128,
     'epochs': 50,
     'optimizer': 'Adam',  # Adam  SGD
     # 'scheduler': 'MultiStepLR-70,100-0.1',  # default  SGDR-5-2  CVPR   step-4-0.8 MultiStepLR
-    'dataset_split': 'dev', #[subject, dev]. Dev will use 'fraction' ""with value 0.01."
-    'data_fraction':1, #'Fraction of dataset to be used [0.01,0.1,1], when you have small dataset use higher fraction'
+    'dataset_split': 'total', #[total, subject, dev]. Dev will use 'fraction' ""with value 0.01."
+    'data_fraction':0.1, #'Fraction of dataset to be used [0.01,0.1,1], when you have small dataset use higher fraction'
 
     ##### File paths
     'data_path': '/home/dberretta-iit.local/data/new_scarfGNN_train',
