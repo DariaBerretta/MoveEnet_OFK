@@ -177,10 +177,9 @@ int main(int argc, char *argv[]){
 
 
     // ===== PREPARE CSV, VIDEO, AND VISUALIZATION RESOURCES =====
-    std::ofstream csv_file;
-    std::vector<std::string> csv_buffer;  // store rows for deferred write
-
-    cv::VideoWriter video_writer;
+    std::ofstream csv_file;                             // CSV file stream for logging results
+    std::vector<std::string> csv_buffer;                // store rows for deferred write
+    cv::VideoWriter video_writer;                       // Video writer for output video file
 
     // CSV writer setup
     if (!no_csv) {
@@ -215,6 +214,7 @@ int main(int argc, char *argv[]){
     if (is_visualize || (!output_video.empty() && !no_video)) {
         canvas = cv::Mat(res, CV_8UC3);
     }
+
     if (is_visualize) {
         cv::namedWindow("moveEnetOFK_offline", cv::WINDOW_NORMAL);
         cv::resizeWindow("moveEnetOFK_offline", res);
@@ -259,7 +259,6 @@ int main(int argc, char *argv[]){
     // Inizialize event handlers and variables
     ev::EROS eros;                                  // EROS event surface handler
     eros.init(res.width, res.height, 7, 0.3);       // Initialize EROS surface
-    cv::Mat eros_frame;                             // EROS frame in cv::Mat format  to send to moveEnet
 
     //Initialize event loader
     ev::offlineLoader<ev::AE> eloader;              // Offline event loader
@@ -336,9 +335,10 @@ int main(int argc, char *argv[]){
     // ===== MAIN PROCESSING LOOP (packet-by-packet) =====
 
     double pts = 0.0;                           // previous packet timestamp
-    const double packet_eps = 1e-9;             // minimal increment to advance loader cursor
+    const double packet_eps = 1e-6;             // minimal increment to advance loader cursor
     double next_packet_ts = 0.0;                // start from t=0; loader will advance on first increment
     int batch_count = 0;
+    bool pending_detection = false;             // true when a new MoveNet result is waiting to correct the KF
     
     while (true) {
         
@@ -360,6 +360,7 @@ int main(int argc, char *argv[]){
         
         bool was_detected = false;
         bool did_flow_update = false;
+        // NOTE: pending_detection is intentionally NOT reset here; it persists until the next flow update
         hpecore::skeleton13 jvs;                        // Joint velocities
         hpecore::skeleton13 filtered_pose;              // Pose from Kalman filter
 
@@ -383,9 +384,10 @@ int main(int argc, char *argv[]){
         net_accum += packet_dt;
         if (net_accum >= net_period) {
             net_accum = 0.0;  // Reset accumulator
-            // Convert EROS surface to cv::Mat and send to MoveEnet
-            eros.getSurface().convertTo(eros_frame, CV_8U);
-            was_detected = mn_handler.update(eros_frame, tnow, detected_pose);
+            // Pass EROS surface directly; update() handles the CV_8U conversion internally
+            was_detected = mn_handler.update(eros.getSurface(), tnow, detected_pose);
+            if (was_detected && hpecore::poseNonZero(detected_pose.pose))
+                pending_detection = true;  // latch until the next flow update consumes it
         }
 
 
@@ -396,12 +398,13 @@ int main(int argc, char *argv[]){
             did_flow_update = true;
             // Kalman and velocity logic here
 
-            if (was_detected && hpecore::poseNonZero(detected_pose.pose)){
+            if (pending_detection) {
                 // Update Kalman filter with detected pose (correction step)
                 if (state.poseIsInitialised())
                     state.updateFromPosition(detected_pose.pose, detected_pose.timestamp);
                 else
                     state.set(detected_pose.pose, tnow);
+                pending_detection = false;  // consumed
             }
             
             if (state.poseIsInitialised())
@@ -424,10 +427,6 @@ int main(int argc, char *argv[]){
         }
 
         const bool snapshot_ready = did_flow_update && state.poseIsInitialised();
-        if (snapshot_ready && batch_count < 5) {
-            yInfo() << "Snapshot ready at ts" << tnow << "det" << was_detected << "flow" << did_flow_update;
-        }
-
         // CSV logging aligned with moveEnet_flowKalman
         if (snapshot_ready && csv_file.is_open()) {
             std::ostringstream row;
@@ -454,6 +453,7 @@ int main(int argc, char *argv[]){
             }
             csv_buffer.push_back(row.str());
         }
+
         // Visualization
         if (is_visualize || (!output_video.empty() && !no_video)) {
             cv::Mat eros_vis;
@@ -499,6 +499,8 @@ int main(int argc, char *argv[]){
 
 
     }
+
+
     // Cleanup
     if (csv_file.is_open()) {
         for (const auto &line : csv_buffer) {
