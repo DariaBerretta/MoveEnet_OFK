@@ -133,7 +133,7 @@ int main(int argc, char *argv[]){
         ss << "Options:\n";
         ss << std::left << std::setw(20) << "--data_file" << std::setw(12) << "<string>" << ": path to input dataset file\n";
         ss << std::left << std::setw(20) << "--output_file" << std::setw(12) << "<string>" << ": output path file\n";
-        // ss << std::left << std::setw(20) << "--output_period" << std::setw(12) << "<double>" << ": interpolated GT rate\n";
+        ss << std::left << std::setw(20) << "--output_period" << std::setw(12) << "<double>" << ": CSV output period (s), default 0.005\n";
         ss << std::left << std::setw(20) << "--net_period" << std::setw(12) << "<double>" << ": model update period\n";
         ss << std::left << std::setw(20) << "--flow_period" << std::setw(12) << "<double>" << ": optical flow update period\n";
         ss << std::left << std::setw(20) << "--h" << std::setw(12) << "<int>" << ": height of image\n";
@@ -158,7 +158,7 @@ int main(int argc, char *argv[]){
     // Read parameters from command line with default values
     std::string datapath_file = rf.check("data_file", Value("/data/new_scarfGNN_full/raw/cam2_S8_Discussion/ch0dvs/data.log")).asString();
     std::string output_file = rf.check("output_file", Value("/home/scarf_images/")).asString();
-    // double output_period = rf.check("output_period", Value(0.005)).asFloat64();                     // 5ms -> 200 Hz
+    double output_period = rf.check("output_period", Value(0.005)).asFloat64();                    // CSV write period
     double net_period = rf.check("net_period", Value(0.05)).asFloat64();                            // Range from 5ms to 100ms -> 200 Hz to 10 Hz   
     double flow_period = rf.check("flow_period", Value(0.005)).asFloat64();                         // Range from 5ms to 100ms -> 200 Hz to 10 Hz
     cv::Size res(rf.check("w", Value(640)).asInt32(), rf.check("h", Value(480)).asInt32());
@@ -287,8 +287,9 @@ int main(int argc, char *argv[]){
     // Detection frequency detF derived from moveEnet update period
     double detF = 1.0 / net_period;                     // Detection frequency in Hz
     double tnow = 0.0;                                  // Current simulation time
-    double net_accum = 0.0;                             // Accumulator for network (detection) period
-    double flow_accum = 0.0;                            // Accumulator for flow (optical) period
+    double next_net_upd = net_period;                   // event-time threshold for next MoveNet call
+    double next_flow_upd = flow_period;                 // event-time threshold for next OF+KF update
+    double next_csv_upd = output_period;               // event-time threshold for next CSV row
 
     // Load event data from file 
     yInfo() << "Loading data ... ";
@@ -334,12 +335,13 @@ int main(int argc, char *argv[]){
 
     // ===== MAIN PROCESSING LOOP (packet-by-packet) =====
 
-    double pts = 0.0;                           // previous packet timestamp
     const double packet_eps = 1e-6;             // minimal increment to advance loader cursor
     double next_packet_ts = 0.0;                // start from t=0; loader will advance on first increment
     int batch_count = 0;
     bool pending_detection = false;             // true when a new MoveNet result is waiting to correct the KF
-    
+    hpecore::skeleton13 jvs;                    // last known joint velocities (persistent across iterations)
+    hpecore::skeleton13 filtered_pose;          // last known filtered pose (persistent across iterations)
+
     while (true) {
         
         if (!eloader.incrementReadTill(next_packet_ts)) {
@@ -354,15 +356,11 @@ int main(int argc, char *argv[]){
         }
 
         const double packet_ts = eloader.begin().timestamp();
-        const double packet_dt = (batch_count == 0) ? 0.0 : std::max(0.0, packet_ts - pts);
-        pts = packet_ts;
         tnow = packet_ts;
         
         bool was_detected = false;
         bool did_flow_update = false;
         // NOTE: pending_detection is intentionally NOT reset here; it persists until the next flow update
-        hpecore::skeleton13 jvs;                        // Joint velocities
-        hpecore::skeleton13 filtered_pose;              // Pose from Kalman filter
 
         // Update EROS/SAE using exactly one packet of events
         int event_count = 0;
@@ -381,9 +379,8 @@ int main(int argc, char *argv[]){
         }
 
         // Send EROS frame to MoveEnet every net_period
-        net_accum += packet_dt;
-        if (net_accum >= net_period) {
-            net_accum = 0.0;  // Reset accumulator
+        if (tnow >= next_net_upd) {
+            next_net_upd += net_period;
             // Pass EROS surface directly; update() handles the CV_8U conversion internally
             was_detected = mn_handler.update(eros.getSurface(), tnow, detected_pose);
             if (was_detected && hpecore::poseNonZero(detected_pose.pose))
@@ -392,9 +389,8 @@ int main(int argc, char *argv[]){
 
 
         // Optical flow update every flow_period
-        flow_accum += packet_dt;
-        if (flow_accum >= flow_period) {
-            flow_accum = 0.0;  // Reset accumulator
+        if (tnow >= next_flow_upd) {
+            next_flow_upd += flow_period;
             did_flow_update = true;
             // Kalman and velocity logic here
 
@@ -427,8 +423,9 @@ int main(int argc, char *argv[]){
         }
 
         const bool snapshot_ready = did_flow_update && state.poseIsInitialised();
-        // CSV logging aligned with moveEnet_flowKalman
-        if (snapshot_ready && csv_file.is_open()) {
+        // CSV logging at output_period rate, independent of flow/MoveNet updates
+        if (tnow >= next_csv_upd && state.poseIsInitialised() && csv_file.is_open()) {
+            next_csv_upd += output_period;
             std::ostringstream row;
             row << std::fixed << std::setprecision(6) << tnow;
             if (eval_format) {
@@ -454,7 +451,7 @@ int main(int argc, char *argv[]){
             csv_buffer.push_back(row.str());
         }
 
-        // Visualization
+        // Visualization (gated on flow update rate)
         if (is_visualize || (!output_video.empty() && !no_video)) {
             cv::Mat eros_vis;
             eros.getSurface().convertTo(eros_vis, CV_8U);
