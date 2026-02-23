@@ -19,3 +19,12 @@ moveEnetFlow/edpr-april.cpp
 moveEnetFlow/extract_eros.cpp
 moveEnetFlow/csv_file
 moveEnetFlow/avi_file
+moveEnetFlow/eval_results
+moveEnetFlow/predictions
+moveEnetFlow/csv_batch
+graph_enet/notebooks/prediction_video.mp4
+graph_enet/notebooks/prediction_video2.mp4
+moveEnetFlow/moveEnet_flowKalman.cpp
+moveEnetFlow/mp4_files
+moveEnetFlow/pwr_cpu_file
+moveEnetFlow/pwr_gpu_file
