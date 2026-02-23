@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.16.0)
 project(moveEnet_flow)
 
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
 # Find required packages
 find_package(YARP COMPONENTS os sig cv REQUIRED)
 find_package(OpenCV REQUIRED)
@@ -14,13 +17,13 @@ include_directories(
 )
 
 # Build moveEnet_flow executable (offline HPE)
-add_executable(moveEnet_flow moveEnet_flow.cpp)
-target_link_libraries(moveEnet_flow
-    ${YARP_LIBRARIES}
-    ${OpenCV_LIBS}
-    ev::event-driven
-    hpe-core::hpe-core
-)
+# add_executable(moveEnet_flow moveEnet_flow.cpp)
+# target_link_libraries(moveEnet_flow
+#     ${YARP_LIBRARIES}
+#     ${OpenCV_LIBS}
+#     ev::event-driven
+#     hpe-core::hpe-core
+# )
 
 
 # Build moveEnet_flowKalman executable (batch processing multiple log files)
@@ -33,7 +36,11 @@ target_link_libraries(moveEnet_flowKalman
 )
 
 # Build async no-idle Kalman pipeline
-add_executable(moveEnetOFK_offline moveEnetOFK_offline.cpp)
+add_executable(moveEnetOFK_offline
+    moveEnetOFK_offline.cpp
+    utils/power_monitor.cpp
+    utils/visualization_utils.cpp
+)
 target_link_libraries(moveEnetOFK_offline
     ${YARP_LIBRARIES}
     ${OpenCV_LIBS}

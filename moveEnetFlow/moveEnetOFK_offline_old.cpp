@@ -15,9 +15,8 @@
 #include <vector>
 #include <sstream>
 #include <unistd.h>
-#include <cstdlib>
-#include "utils/power_monitor.h"
-#include "utils/visualization_utils.h"
+#include <filesystem>
+#include <ctime>
 
 using namespace yarp::os;
 using namespace yarp::sig;
@@ -36,30 +35,15 @@ using yarp::os::Value;
  * 7. make
  */
 
-/**
- * Utility wrapper for communicating with MoveNet using YARP ports.
- *
- * The class manages the request/response flow to MoveNet: it publishes
- * transformed frames to a YARP source port and reads the skeleton prediction
- * from a YARP sink port.
- */
-class offlineDetector
+class externalDetector
 {
 private:
-    double period{0.001};  ///< Minimum interval between requests (sec) and last send timestamp
+    double period{0.1}, tic{0.0};
 
-    BufferedPort<ImageOf<PixelMono>> output_port;  ///< Port used to send images to MoveNet
-    BufferedPort<Bottle> input_port;               ///< Port used to receive skeleton responses
+    BufferedPort<ImageOf<PixelMono>> output_port;
+    BufferedPort<Bottle> input_port;
 
 public:
-    /**
-     * Opens YARP ports and configures the desired request rate.
-     *
-     * @param output_name YARP name for the port that sends frames to the model
-     * @param input_name YARP name for the port that receives MoveNet skeletons
-     * @param rate Requested number of model updates per second (must be > 0)
-     * @return true if both ports opened successfully and rate was valid
-     */
     bool init(std::string output_name, std::string input_name, double rate)
     {
         if (!output_port.open(output_name))
@@ -74,40 +58,32 @@ public:
         period = 1.0 / rate;
         return true;
     }
-
-    /**
-     * Closes the YARP ports to free resources when the detector is no longer needed.
-     */
     void close()
     {
         output_port.close();
         input_port.close();
     }
 
-    /**
-     * Sends the latest processed image to MoveNet and blocks until a skeleton reply
-     * arrives (or a timeout occurs internally in YARP). The method also enforces the
-     * configured update rate by delaying between calls based on wall-clock time.
-     *
-     * @param latest_image Grayscale frame to send (already prepared image)
-     * @param latest_ts Timestamp that should be copied into the returned skeleton
-     * @param previous_skeleton Output reference populated with the prediction
-     * @return true when a skeleton was received; false on timeout or error
-     */
     bool update(const cv::Mat &latest_image, double latest_ts, hpecore::stampedPose &previous_skeleton)
     {
-        // NOTE: wall-clock rate limiting removed for offline replay (runs as fast as possible)
+        // keep request rate bounded (wall-clock)
+        const double wall_now = yarp::os::Time::now();
+        if (tic > 0.0 && wall_now - tic < period)
+        {
+            yarp::os::Time::delay(period - (wall_now - tic));
+        }
 
-        // transform latest_image into MoveNet-compatible monochrome frame
+        // send current frame to MoveNet
         static cv::Mat cv_image;
         latest_image.convertTo(cv_image, CV_8U);
         cv::GaussianBlur(cv_image, cv_image, cv::Size(5, 5), 0, 0);
         output_port.prepare().copy(yarp::cv::fromCvMat<PixelMono>(cv_image));
         output_port.write();
 
-        const double req_wall_ts = yarp::os::Time::now();           // Timestamp when request was sent (for latency measurement)
+        const double req_wall_ts = yarp::os::Time::now();
+        tic = req_wall_ts;
 
-        // wait (blocking) for MoveNet response, then populate the stamped pose
+        // wait for MoveNet response (blocking)
         Bottle *mn_container = input_port.read(true);
         if (mn_container)
         {
@@ -123,7 +99,7 @@ public:
 
 int main(int argc, char *argv[]){
     
-    // Prepare and configure the resource finder
+    // prepare and configure the resource finder
     yarp::os::ResourceFinder rf;
     rf.setVerbose(false);
     rf.configure(argc, argv);
@@ -134,7 +110,7 @@ int main(int argc, char *argv[]){
         ss << "Options:\n";
         ss << std::left << std::setw(20) << "--data_file" << std::setw(12) << "<string>" << ": path to input dataset file\n";
         ss << std::left << std::setw(20) << "--output_file" << std::setw(12) << "<string>" << ": output path file\n";
-        ss << std::left << std::setw(20) << "--output_period" << std::setw(12) << "<double>" << ": CSV output period (s), default 0.005\n";
+        ss << std::left << std::setw(20) << "--output_period" << std::setw(12) << "<double>" << ": interpolated GT rate\n";
         ss << std::left << std::setw(20) << "--net_period" << std::setw(12) << "<double>" << ": model update period\n";
         ss << std::left << std::setw(20) << "--flow_period" << std::setw(12) << "<double>" << ": optical flow update period\n";
         ss << std::left << std::setw(20) << "--h" << std::setw(12) << "<int>" << ": height of image\n";
@@ -146,14 +122,11 @@ int main(int argc, char *argv[]){
         ss << std::left << std::setw(20) << "--use_lc" << std::setw(12) << "<bool>" << ": use latency compensation in KF\n";
         ss << std::left << std::setw(20) << "--vis" << std::setw(12) << "" << ": enable on-screen visualization\n";
         ss << std::left << std::setw(20) << "--output_csv" << std::setw(12) << "<string>" << ": path to output csv file\n";
+        ss << std::left << std::setw(20) << "--eval_format" << std::setw(12) << "" << ": output CSV in evaluate_hpe.py format\n";
         ss << std::left << std::setw(20) << "--include_velocities" << std::setw(12) << "" << ": when eval_format is set, also log velocities\n";
         ss << std::left << std::setw(20) << "--no_csv" << std::setw(12) << "" << ": skip CSV logging\n";
         ss << std::left << std::setw(20) << "--output_video" << std::setw(12) << "<string>" << ": path to output video file (.mp4)\n";
         ss << std::left << std::setw(20) << "--no_video" << std::setw(12) << "" << ": disable video output\n";
-        ss << std::left << std::setw(20) << "--pwrjlr_file" << std::setw(12) << "<string>" << ": base path for PowerJoular output (no extension)\n";
-        ss << std::left << std::setw(20) << "--gpu_file" << std::setw(12) << "<string>" << ": output CSV file for NVIDIA GPU telemetry\n";
-        ss << std::left << std::setw(20) << "--gpu_period_ms" << std::setw(12) << "<int>" << ": nvidia-smi sampling period in ms (default 5)\n";
-        ss << std::left << std::setw(20) << "--gpu_index" << std::setw(12) << "<int>" << ": NVIDIA GPU index to monitor (default 0)\n";
         yInfo() << ss.str();
         // exit after printing help
         return 0;
@@ -162,8 +135,8 @@ int main(int argc, char *argv[]){
     // Read parameters from command line with default values
     std::string datapath_file = rf.check("data_file", Value("/data/new_scarfGNN_full/raw/cam2_S8_Discussion/ch0dvs/data.log")).asString();
     std::string output_file = rf.check("output_file", Value("/home/scarf_images/")).asString();
-    double output_period = rf.check("output_period", Value(0.005)).asFloat64();                    // CSV write period
-    double net_period = rf.check("net_period", Value(0.05)).asFloat64();                            // Range from 5ms to 100ms -> 200 Hz to 10 Hz   
+    double output_period = rf.check("output_period", Value(0.005)).asFloat64();                     // 5ms -> 200 Hz
+    double net_period = rf.check("net_period", Value(0.005)).asFloat64();                           // Range from 5ms to 100ms -> 200 Hz to 10 Hz   
     double flow_period = rf.check("flow_period", Value(0.005)).asFloat64();                         // Range from 5ms to 100ms -> 200 Hz to 10 Hz
     cv::Size res(rf.check("w", Value(640)).asInt32(), rf.check("h", Value(480)).asInt32());
     double procU = rf.check("pu", Value(1e-1)).asFloat64();                                         // Process uncertainty
@@ -172,72 +145,45 @@ int main(int argc, char *argv[]){
     int roiSize = rf.check("roi", Value(20)).asInt32();                                             // ROI size for velocity estimation
     bool latency_compensation = rf.check("use_lc", Value(false)).asBool();                          // Latency compensation flag
     bool is_visualize = rf.check("vis");                                                            // Visualization flag
-    std::string output_csv = rf.check("output_csv", Value("/home/moveEnetFlow/csv_file/test_pwr_cpugpu.csv")).asString();
+    std::string output_csv = rf.check("output_csv", Value("/home/moveEnetFlow/csv_file/test_moveEnetOFK_offline.csv")).asString();
+    bool eval_format = rf.check("eval_format");
     bool include_velocities = rf.check("include_velocities");
     bool no_csv = rf.check("no_csv");
     std::string output_video = rf.check("output_video", Value("")).asString();
     bool no_video = rf.check("no_video");
-    std::string powerjoular_file = rf.check("pwrjlr_file", Value("/home/moveEnetFlow/pwr_cpu_file/testcpu_pwr")).asString();
-    std::string gpu_monitor_file = rf.check("gpu_file", Value("/home/moveEnetFlow/pwr_gpu_file/testgpu_pwr")).asString();
-    int gpu_monitor_period_ms = rf.check("gpu_period_ms", Value(5)).asInt32();
-    int gpu_monitor_index = rf.check("gpu_index", Value(0)).asInt32();
 
-    PowerMonitor power_monitor;
-    PowerMonitorConfig power_cfg;
-    power_cfg.powerjoular_file = powerjoular_file;
-    power_cfg.gpu_file = gpu_monitor_file;
-    power_cfg.gpu_period_ms = gpu_monitor_period_ms;
-    power_cfg.gpu_index = gpu_monitor_index;
-    power_cfg.target_pid = ::getpid();
-    if (!power_monitor.start(power_cfg)) {
-        return -1;
+    // Generate video filename if not specified and video is enabled
+    if (output_video.empty() && !no_video) {
+        // Get current date
+        std::time_t now = std::time(nullptr);
+        std::tm* tm = std::localtime(&now);
+        char date_str[11];
+        std::strftime(date_str, sizeof(date_str), "%Y-%m-%d", tm);
+
+        // Get folder name from output_csv path
+        std::filesystem::path csv_path(datapath_file);
+        std::string folder_name = csv_path.parent_path().parent_path().filename().string();
+
+        // Create video filename
+        output_video = std::string("/home/moveEnetFlow/mp4_files/") + date_str + "_" + folder_name + ".mp4";
     }
 
+    std::ofstream csv_file;
+    std::vector<std::string> csv_buffer;  // store rows for deferred write
 
-    // ===== PREPARE CSV, VIDEO, AND VISUALIZATION RESOURCES =====
-    std::ofstream csv_file;                             // CSV file stream for logging results
-    std::vector<std::string> csv_buffer;                // store rows for deferred write
-    VisualizationContext vis_ctx;                      // Visualization and video writer resources
-
-    // CSV writer setup
-    if (!no_csv) {
-        csv_file.open(output_csv);
-        if (!csv_file.is_open()) {
-            yError() << "Could not open CSV file for writing:" << output_csv;
-            return -1;
-        }
-        yInfo() << "CSV logging enabled ->" << output_csv;
-        csv_file << "timestamp,latency";
-        for (int j = 0; j < 13; j++) {
-            csv_file << ",joint" << j << "_x,joint" << j << "_y";
-        }
-        if (include_velocities) {
-            for (int j = 0; j < 13; j++) {
-                csv_file << ",joint" << j << "_vx,joint" << j << "_vy";
-            }
-        }
-        csv_file << "\n";
-        csv_file.flush();
-    }
-
-    // Visualization and video setup
-    if (!initialiseVisualization(vis_ctx, res, is_visualize, no_video, output_video, datapath_file, output_period)) {
-        return -1;
-    }
-
-    
-    // ===== INITIALIZE ALGORITHMIC COMPONENTS =====
+    cv::VideoWriter video_writer;
 
     // Inizialize event handlers and variables
     ev::EROS eros;                                  // EROS event surface handler
     eros.init(res.width, res.height, 7, 0.3);       // Initialize EROS surface
+    cv::Mat eros_frame;                             // EROS frame in cv::Mat format  to send to moveEnet
 
     //Initialize event loader
     ev::offlineLoader<ev::AE> eloader;              // Offline event loader
     
     //Initialize MoveEnet handler
-    offlineDetector mn_handler;                    // MoveEnet handler
-    hpecore::stampedPose detected_pose;            // Detected pose from MoveEnet
+    externalDetector mn_handler;                    // MoveEnet handler
+    hpecore::stampedPose detected_pose;             // Detected pose from MoveEnet
 
     // Kalman filter components
     hpecore::multiJointLatComp state;               // Kalman filter for pose state fusion
@@ -246,6 +192,7 @@ int main(int argc, char *argv[]){
     // SAE surface handler
     hpecore::SAE sae_handler;                       // SAE event surface handler
     sae_handler.init(res.width, res.height);        // Initialize SAE surface
+    // velocity_estimator.setParameters removed: multi_area_velocity accepts ROI per call
 
     double lc = latency_compensation ? 1.0 : 0.0;  // Latency compensation flag
     if (!state.initialise({procU, measUD, measUV, lc})) {
@@ -256,13 +203,13 @@ int main(int argc, char *argv[]){
     // MoveEnet checkpoint path
     std::string checkpoint_path = rf.check("checkpoint_path", Value("/usr/local/src/hpe-core/example/movenet/models/e97_valacc0.81209.pth")).asString();
 
-    // Detection frequency detF derived from moveEnet update period
-    double detF = 1.0 / net_period;                     // Detection frequency in Hz
+    // Detection frequency detF derived from output_period
+    double detF = 1.0 / output_period;
     double tnow = 0.0;                                  // Current simulation time
-    double next_net_upd = net_period;                   // event-time threshold for next MoveNet call
-    double next_flow_upd = flow_period;                 // event-time threshold for next OF+KF update
-    double next_csv_upd = output_period;               // event-time threshold for next CSV row
-    double next_vis_upd = output_period;               // event-time threshold for next visualization frame
+    double net_accum = 0.0;                             // Accumulator for network (detection) period
+    double flow_accum = 0.0;                            // Accumulator for flow (optical) period
+
+    
 
     // Load event data from file 
     yInfo() << "Loading data ... ";
@@ -272,7 +219,6 @@ int main(int argc, char *argv[]){
     } else {
         yInfo() << eloader.getinfo();
     }
-
 
     // Open and connect to YARP
     if(!yarp::os::Network::checkNetwork()) {
@@ -304,75 +250,108 @@ int main(int argc, char *argv[]){
     yarp::os::Network::connect("/movenet/sklt:o", movenet_in, "fast_tcp");
     yarp::os::Network::connect(eros_out, "/movenet/img:i", "fast_tcp");
 
-    
+    // CSV writer setup
+    if (!no_csv) {
+        csv_file.open(output_csv);
+        if (!csv_file.is_open()) {
+            yError() << "Could not open CSV file for writing:" << output_csv;
+            return -1;
+        }
+        yInfo() << "CSV logging enabled ->" << output_csv;
+        if (eval_format) {
+            csv_file << "timestamp,latency";
+            for (int j = 0; j < 13; j++) {
+                csv_file << ",joint" << j << "_x,joint" << j << "_y";
+            }
+            if (include_velocities) {
+                for (int j = 0; j < 13; j++) {
+                    csv_file << ",joint" << j << "_vx,joint" << j << "_vy";
+                }
+            }
+        } else {
+            csv_file << "timestamp";
+            for (int j = 0; j < 13; j++) {
+                csv_file << ",joint" << j << "_x,joint" << j << "_y,joint" << j << "_vx,joint" << j << "_vy,confidence" << j;
+            }
+        }
+        csv_file << "\n";
+        csv_file.flush();
+    }
 
-    // ===== MAIN PROCESSING LOOP (packet-by-packet) =====
+    // Visualization setup
+    cv::Mat canvas;
+    if (is_visualize || (!output_video.empty() && !no_video)) {
+        canvas = cv::Mat(res, CV_8UC3);
+    }
+    if (is_visualize) {
+        cv::namedWindow("moveEnetOFK_offline", cv::WINDOW_NORMAL);
+        cv::resizeWindow("moveEnetOFK_offline", res);
+    }
 
-    const double packet_eps = 1e-6;             // minimal increment to advance loader cursor
-    double next_packet_ts = 0.0;                // start from t=0; loader will advance on first increment
+    // Video writer setup
+    if (!output_video.empty()) {
+        // Create output directory if it doesn't exist
+        std::filesystem::path video_path(output_video);
+        std::filesystem::create_directories(video_path.parent_path());
+
+        int fps = static_cast<int>(1.0 / output_period);
+        video_writer.open(output_video, cv::VideoWriter::fourcc('m', 'p', '4', 'v'), fps, res);
+        if (!video_writer.isOpened()) {
+            yError() << "Could not open video writer for:" << output_video;
+            return -1;
+        }
+        yInfo() << "Video output enabled ->" << output_video << " at " << fps << " FPS";
+    }
+
+    // Main processing loop
+
+    double pts = 0.0;  // previous timestamp guard
     int batch_count = 0;
-    bool pending_detection = false;             // true when a new MoveNet result is waiting to correct the KF
-    hpecore::skeleton13 jvs;                    // last known joint velocities (persistent across iterations)
-    hpecore::skeleton13 filtered_pose;          // last known filtered pose (persistent across iterations)
-
     while (true) {
-        
-        if (!eloader.incrementReadTill(next_packet_ts)) {
-            yInfo() << "Finished processing event file. Packets:" << batch_count;
-            break;
-        }
-
-        if (eloader.begin() == eloader.end()) {
-            // No packet yielded at this timestamp; try the next tick
-            next_packet_ts += packet_eps;
-            continue;
-        }
-
-        const double packet_ts = eloader.begin().timestamp();
-        tnow = packet_ts;
+        tnow += output_period;
         
         bool was_detected = false;
-        bool did_flow_update = false;
-        // NOTE: pending_detection is intentionally NOT reset here; it persists until the next flow update
+        hpecore::skeleton13 jvs;                        // Joint velocities
+        hpecore::skeleton13 filtered_pose;              // Pose from Kalman filter
 
-        // Update EROS/SAE using exactly one packet of events
+        // Update EROS surface with events up to current time tnow
+        eloader.incrementReadTill(tnow);
         int event_count = 0;
         for(ev::offlineLoader<ev::AE>::iterator v = eloader.begin(); v != eloader.end(); v++){
             eros.update(v->x, v->y);
             sae_handler.update(v->x, v->y, tnow);
             event_count++;
         }
-
         batch_count++;
-        next_packet_ts = packet_ts + packet_eps;  // ask loader for strictly later packet
 
-        // Skip empty packet payloads
-        if (event_count == 0) {
-            continue;
+        // Stop when no more events remain
+        if (event_count == 0 && tnow > 0) {
+            yInfo() << "Finished processing event file. Frames: " << batch_count;
+            break;
         }
 
         // Send EROS frame to MoveEnet every net_period
-        if (tnow >= next_net_upd) {
-            next_net_upd += net_period;
-            // Pass EROS surface directly; update() handles the CV_8U conversion internally
-            was_detected = mn_handler.update(eros.getSurface(), tnow, detected_pose);
-            if (was_detected && hpecore::poseNonZero(detected_pose.pose))
-                pending_detection = true;  // latch until the next flow update consumes it
+        net_accum += output_period;
+        if (net_accum >= net_period) {
+            net_accum = 0.0;  // Reset accumulator
+            // Convert EROS surface to cv::Mat and send to MoveEnet
+            eros.getSurface().convertTo(eros_frame, CV_8U);
+            was_detected = mn_handler.update(eros_frame, tnow, detected_pose);
         }
 
+
         // Optical flow update every flow_period
-        if (tnow >= next_flow_upd) {
-            next_flow_upd += flow_period;
-            did_flow_update = true;
+        flow_accum += output_period;
+        if (flow_accum >= flow_period) {
+            flow_accum = 0.0;  // Reset accumulator
             // Kalman and velocity logic here
 
-            if (pending_detection) {
+            if (was_detected && hpecore::poseNonZero(detected_pose.pose)){
                 // Update Kalman filter with detected pose (correction step)
                 if (state.poseIsInitialised())
                     state.updateFromPosition(detected_pose.pose, detected_pose.timestamp);
                 else
                     state.set(detected_pose.pose, tnow);
-                pending_detection = false;  // consumed
             }
             
             if (state.poseIsInitialised())
@@ -394,14 +373,11 @@ int main(int argc, char *argv[]){
             }
         }
 
-        const bool snapshot_ready = did_flow_update && state.poseIsInitialised();
-        // CSV logging at output_period rate, independent of flow/MoveNet updates
-        // Advance timer unconditionally so it doesn't stall before pose is initialised
-        if (tnow >= next_csv_upd) {
-            next_csv_upd += output_period;
-            if (state.poseIsInitialised() && csv_file.is_open()) {
-                std::ostringstream row;
-                row << std::fixed << std::setprecision(6) << tnow;
+        // CSV logging aligned with moveEnet_flowKalman
+        if (state.poseIsInitialised() && csv_file.is_open()) {
+            std::ostringstream row;
+            row << std::fixed << std::setprecision(6) << tnow;
+            if (eval_format) {
                 double lat = (detected_pose.timestamp > 0) ? detected_pose.delay : 0.0;
                 row << "," << lat;
                 for (int j = 0; j < 13; j++) {
@@ -412,25 +388,62 @@ int main(int argc, char *argv[]){
                         row << "," << jvs[j].u << "," << jvs[j].v;
                     }
                 }
-                csv_buffer.push_back(row.str());
+            } else {
+                for (int j = 0; j < 13; j++) {
+                    row << "," << filtered_pose[j].u
+                        << "," << filtered_pose[j].v
+                        << "," << jvs[j].u
+                        << "," << jvs[j].v
+                        << "," << detected_pose.conf[j];
+                }
             }
+            csv_buffer.push_back(row.str());
         }
-
         // Visualization
-        if ((is_visualize || (!output_video.empty() && !no_video)) && tnow >= next_vis_upd) {
-            next_vis_upd += output_period;
-            renderVisualizationFrame(vis_ctx, eros.getSurface(), state.poseIsInitialised(), filtered_pose, detected_pose, tnow);
-            writeVisualizationFrame(vis_ctx, snapshot_ready);
-            if (showVisualizationFrame(vis_ctx)) {
-                yInfo() << "User requested stop";
-                break;
+        if (is_visualize || (!output_video.empty() && !no_video)) {
+            cv::Mat eros_vis;
+            eros.getSurface().convertTo(eros_vis, CV_8U);
+            cv::GaussianBlur(eros_vis, eros_vis, {9, 9}, 0);
+            cv::normalize(eros_vis, eros_vis, 0, 255, cv::NORM_MINMAX);
+            cv::cvtColor(eros_vis, canvas, cv::COLOR_GRAY2BGR);
+
+            if (state.poseIsInitialised()) {
+                try {
+                    hpecore::stampedPose pose_filtered;
+                    pose_filtered.pose = state.query();
+                    pose_filtered.timestamp = tnow;
+                    pose_filtered.conf = detected_pose.conf; // ensure joints are drawn
+                    hpecore::drawSkeleton(canvas, pose_filtered, {255, 0, 0}, 3, 0.0); // red = filtered
+                } catch (const cv::Exception&) {
+                    // skip drawing on error
+                }
+            }
+
+            if (hpecore::poseNonZero(detected_pose.pose)) {
+                try {
+                    hpecore::stampedPose pose_raw = detected_pose;
+                    hpecore::drawSkeleton(canvas, pose_raw, {0, 0, 255}, 2, 0.0); // blue = raw
+                } catch (const cv::Exception&) {
+                   // skip drawing on error
+                }
+            }
+
+            if (video_writer.isOpened()) {
+                video_writer.write(canvas);
+            }
+
+            if (is_visualize) {
+                cv::imshow("moveEnetOFK_offline", canvas);
+                char key_pressed = cv::waitKey(1);
+                if (key_pressed == '\e' || key_pressed == 'q') {
+                    yInfo() << "User requested stop";
+                    break;
+                }
             }
         }
 
 
     }
-
-
     // Cleanup
     if (csv_file.is_open()) {
         for (const auto &line : csv_buffer) {
@@ -439,13 +452,19 @@ int main(int argc, char *argv[]){
         csv_file.close();
         yInfo() << "CSV rows written:" << csv_buffer.size() << "->" << output_csv;
     }
-    power_monitor.stop();
     mn_handler.close();
     yarp::os::Network::disconnect("/movenet/sklt:o", movenet_in, "fast_tcp");
     yarp::os::Network::disconnect(eros_out, "/movenet/img:i", "fast_tcp");
     system("killall python3");  // Kill MoveNet process
 
-    closeVisualization(vis_ctx, output_video);
+    if (is_visualize) {
+        cv::destroyAllWindows();
+    }
+
+    if (video_writer.isOpened()) {
+        video_writer.release();
+        yInfo() << "Video saved to:" << output_video;
+    }
     
     return 0;
 }

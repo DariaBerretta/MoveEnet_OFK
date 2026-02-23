@@ -5,13 +5,13 @@
 # Usage: ./run_batch_processing.sh [options]
 
 # Default parameters
-DATA_ROOT="/data/new_scarfGNN_full/raw"
+DATA_ROOT="/data/moveEnet_test/raw"
 OUTPUT_DIR="/home/moveEnetFlow/csv_file"
 
 # moveEnetOFK_offline parameters
 OUT_PERIOD=0.005
-NET_PERIOD=0.005
-FLOW_PERIOD=0.005
+NET_PERIOD=0.05
+FLOW_PERIOD=0.001
 IMG_W=640
 IMG_H=480
 PROC_U=1e-1
@@ -19,10 +19,17 @@ MEAS_UD=1e-4
 MEAS_UV=0.0
 ROI=20
 USE_LC=false
-EVAL_FORMAT=false
 INCLUDE_VELOCITIES=false
 NO_CSV=false
+NO_VIDEO=true
 CHECKPOINT_PATH="/usr/local/src/hpe-core/example/movenet/models/e97_valacc0.81209.pth"
+USE_POWERJOULAR=false
+POWERJOULAR_PERIOD=1.0
+POWERJOULAR_DIR=""
+USE_GPU_MONITOR=false
+GPU_MONITOR_PERIOD_MS=200
+GPU_MONITOR_DIR=""
+GPU_INDEX=0
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -75,10 +82,6 @@ while [[ $# -gt 0 ]]; do
       USE_LC=true
       shift 1
       ;;
-    --eval_format)
-      EVAL_FORMAT=true
-      shift 1
-      ;;
     --include_velocities)
       INCLUDE_VELOCITIES=true
       shift 1
@@ -87,8 +90,40 @@ while [[ $# -gt 0 ]]; do
       NO_CSV=true
       shift 1
       ;;
+    --no_video)
+      NO_VIDEO=true
+      shift 1
+      ;;
     --checkpoint_path)
       CHECKPOINT_PATH="$2"
+      shift 2
+      ;;
+    --use_powerjoular)
+      USE_POWERJOULAR=true
+      shift 1
+      ;;
+    --powerjoular_period)
+      POWERJOULAR_PERIOD="$2"
+      shift 2
+      ;;
+    --powerjoular_dir)
+      POWERJOULAR_DIR="$2"
+      shift 2
+      ;;
+    --use_gpu_monitor)
+      USE_GPU_MONITOR=true
+      shift 1
+      ;;
+    --gpu_monitor_period_ms)
+      GPU_MONITOR_PERIOD_MS="$2"
+      shift 2
+      ;;
+    --gpu_monitor_dir)
+      GPU_MONITOR_DIR="$2"
+      shift 2
+      ;;
+    --gpu_index)
+      GPU_INDEX="$2"
       shift 2
       ;;
     --help)
@@ -109,10 +144,17 @@ while [[ $# -gt 0 ]]; do
       echo "  --muV <float>         KF measurement uncertainty (velocity) (default: 0.0)"
       echo "  --roi <int>           ROI size for velocity estimation (default: 20)"
       echo "  --use_lc              Enable latency compensation"
-      echo "  --eval_format         Output CSV in evaluate_hpe.py format"
-      echo "  --include_velocities  Include velocities when eval_format is set"
+      echo "  --include_velocities  Include velocities in CSV output"
       echo "  --no_csv              Skip CSV logging (for debugging)"
+      echo "  --no_video            Disable video output"
       echo "  --checkpoint_path <path>  MoveNet checkpoint path"
+      echo "  --use_powerjoular      Enable PowerJoular profiling per run"
+      echo "  --powerjoular_period <float>  PowerJoular sampling period in seconds (default: 1.0)"
+      echo "  --powerjoular_dir <path>  Directory for PowerJoular output files (default: <out_subdir>/powerjoular)"
+      echo "  --use_gpu_monitor      Enable NVIDIA GPU telemetry logging per run"
+      echo "  --gpu_monitor_period_ms <int>  GPU telemetry sampling period in ms (default: 200)"
+      echo "  --gpu_monitor_dir <path>  Directory for GPU CSV output files (default: <out_subdir>/gpu_monitor)"
+      echo "  --gpu_index <int>      GPU index to monitor with nvidia-smi (default: 0)"
       echo "  --help                Show this help message"
       echo ""
       echo "Example:"
@@ -137,15 +179,42 @@ echo "Image: ${IMG_W}x${IMG_H}"
 echo "KF params: pu=${PROC_U}, muD=${MEAS_UD}, muV=${MEAS_UV}"
 echo "ROI: ${ROI}"
 echo "Latency compensation: ${USE_LC}"
-echo "Eval format: ${EVAL_FORMAT}"
 echo "Include velocities: ${INCLUDE_VELOCITIES}"
 echo "No CSV: ${NO_CSV}"
+echo "No video: ${NO_VIDEO}"
 echo "Checkpoint: ${CHECKPOINT_PATH}"
+echo "PowerJoular enabled: ${USE_POWERJOULAR}"
+echo "PowerJoular period: ${POWERJOULAR_PERIOD} s"
+echo "GPU monitor enabled: ${USE_GPU_MONITOR}"
+echo "GPU monitor period: ${GPU_MONITOR_PERIOD_MS} ms"
+echo "GPU index: ${GPU_INDEX}"
 echo ""
 
 # Ensure output directory exists and create param-based subdir
-OUT_SUBDIR="${OUTPUT_DIR}/op${OUT_PERIOD}_np${NET_PERIOD}_fp${FLOW_PERIOD}"
+OUT_SUBDIR="${OUTPUT_DIR}/moveEnetOFK_test/op${OUT_PERIOD}_np${NET_PERIOD}_fp${FLOW_PERIOD}"
 mkdir -p "$OUT_SUBDIR"
+
+if [[ "$USE_POWERJOULAR" == "true" ]]; then
+  if ! command -v powerjoular >/dev/null 2>&1; then
+    echo "PowerJoular not found in PATH. Install it or run without --use_powerjoular."
+    exit 1
+  fi
+  if [[ -z "$POWERJOULAR_DIR" ]]; then
+    POWERJOULAR_DIR="${OUT_SUBDIR}/powerjoular"
+  fi
+  mkdir -p "$POWERJOULAR_DIR"
+fi
+
+if [[ "$USE_GPU_MONITOR" == "true" ]]; then
+  if ! command -v nvidia-smi >/dev/null 2>&1; then
+    echo "nvidia-smi not found in PATH. Install NVIDIA tools or run without --use_gpu_monitor."
+    exit 1
+  fi
+  if [[ -z "$GPU_MONITOR_DIR" ]]; then
+    GPU_MONITOR_DIR="${OUT_SUBDIR}/gpu_monitor"
+  fi
+  mkdir -p "$GPU_MONITOR_DIR"
+fi
 
 # Run the batch processing (find all data.log files)
 mapfile -t LOG_FILES < <(find "$DATA_ROOT" -type f -path "*/ch0dvs/data.log" | sort)
@@ -165,7 +234,7 @@ for LOG_FILE in "${LOG_FILES[@]}"; do
   echo "Processing: $LOG_FILE"
   echo "Output CSV: $OUT_CSV"
 
-  CMD=("./moveEnetOFK_offline"
+  CMD=("/home/moveEnetFlow/build/moveEnetOFK_offline"
     --data_file "$LOG_FILE"
     --output_csv "$OUT_CSV"
     --output_period "$OUT_PERIOD"
@@ -183,19 +252,45 @@ for LOG_FILE in "${LOG_FILES[@]}"; do
   if [[ "$USE_LC" == "true" ]]; then
     CMD+=(--use_lc)
   fi
-  if [[ "$EVAL_FORMAT" == "true" ]]; then
-    CMD+=(--eval_format)
-  fi
   if [[ "$INCLUDE_VELOCITIES" == "true" ]]; then
     CMD+=(--include_velocities)
   fi
   if [[ "$NO_CSV" == "true" ]]; then
     CMD+=(--no_csv)
   fi
+  if [[ "$NO_VIDEO" == "true" ]]; then
+    CMD+=(--no_video)
+  fi
+  if [[ "$USE_GPU_MONITOR" == "true" ]]; then
+    GPU_LOG="${GPU_MONITOR_DIR}/${REL_SAFE}.csv"
+    CMD+=(--gpu_file "$GPU_LOG" --gpu_period_ms "$GPU_MONITOR_PERIOD_MS" --gpu_index "$GPU_INDEX")
+    echo "GPU log file: $GPU_LOG"
+  fi
 
-  "${CMD[@]}"
+  if [[ "$USE_POWERJOULAR" == "true" ]]; then
+    PJ_BASE="${POWERJOULAR_DIR}/${REL_SAFE}"
+    echo "Power log base: ${PJ_BASE}"
+
+    "${CMD[@]}" &
+    RUN_PID=$!
+    powerjoular -l -c -p "$RUN_PID" -f "$PJ_BASE" -t "$POWERJOULAR_PERIOD"
+    wait "$RUN_PID"
+    RUN_STATUS=$?
+    if [[ $RUN_STATUS -ne 0 ]]; then
+      echo "Processing failed (exit ${RUN_STATUS}): $LOG_FILE"
+      exit "$RUN_STATUS"
+    fi
+  else
+    "${CMD[@]}"
+  fi
 done
 
 echo ""
 echo "Batch processing completed!"
 echo "CSV files saved in: $OUT_SUBDIR"
+if [[ "$USE_POWERJOULAR" == "true" ]]; then
+  echo "Power logs saved in: $POWERJOULAR_DIR"
+fi
+if [[ "$USE_GPU_MONITOR" == "true" ]]; then
+  echo "GPU logs saved in: $GPU_MONITOR_DIR"
+fi
