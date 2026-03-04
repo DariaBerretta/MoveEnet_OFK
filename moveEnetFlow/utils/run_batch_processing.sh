@@ -10,7 +10,7 @@ OUTPUT_DIR="/home/moveEnetFlow/csv_file"
 
 # moveEnetOFK_offline parameters
 OUT_PERIOD=0.005
-NET_PERIOD=0.05
+NET_PERIOD=0.1
 FLOW_PERIOD=0.001
 IMG_W=640
 IMG_H=480
@@ -24,7 +24,6 @@ NO_CSV=false
 NO_VIDEO=true
 CHECKPOINT_PATH="/usr/local/src/hpe-core/example/movenet/models/e97_valacc0.81209.pth"
 USE_POWERJOULAR=false
-POWERJOULAR_PERIOD=1.0
 POWERJOULAR_DIR=""
 USE_GPU_MONITOR=false
 GPU_MONITOR_PERIOD_MS=200
@@ -102,12 +101,12 @@ while [[ $# -gt 0 ]]; do
       USE_POWERJOULAR=true
       shift 1
       ;;
-    --powerjoular_period)
-      POWERJOULAR_PERIOD="$2"
-      shift 2
-      ;;
     --powerjoular_dir)
       POWERJOULAR_DIR="$2"
+      shift 2
+      ;;
+    --powerjoular_period)
+      echo "Warning: --powerjoular_period is deprecated and ignored (sampling is fixed by PowerJoular)."
       shift 2
       ;;
     --use_gpu_monitor)
@@ -149,7 +148,6 @@ while [[ $# -gt 0 ]]; do
       echo "  --no_video            Disable video output"
       echo "  --checkpoint_path <path>  MoveNet checkpoint path"
       echo "  --use_powerjoular      Enable PowerJoular profiling per run"
-      echo "  --powerjoular_period <float>  PowerJoular sampling period in seconds (default: 1.0)"
       echo "  --powerjoular_dir <path>  Directory for PowerJoular output files (default: <out_subdir>/powerjoular)"
       echo "  --use_gpu_monitor      Enable NVIDIA GPU telemetry logging per run"
       echo "  --gpu_monitor_period_ms <int>  GPU telemetry sampling period in ms (default: 200)"
@@ -184,7 +182,6 @@ echo "No CSV: ${NO_CSV}"
 echo "No video: ${NO_VIDEO}"
 echo "Checkpoint: ${CHECKPOINT_PATH}"
 echo "PowerJoular enabled: ${USE_POWERJOULAR}"
-echo "PowerJoular period: ${POWERJOULAR_PERIOD} s"
 echo "GPU monitor enabled: ${USE_GPU_MONITOR}"
 echo "GPU monitor period: ${GPU_MONITOR_PERIOD_MS} ms"
 echo "GPU index: ${GPU_INDEX}"
@@ -234,6 +231,20 @@ for LOG_FILE in "${LOG_FILES[@]}"; do
   echo "Processing: $LOG_FILE"
   echo "Output CSV: $OUT_CSV"
 
+  if [[ "$USE_POWERJOULAR" == "true" ]]; then
+    PJ_BASE="${POWERJOULAR_DIR}/${REL_SAFE}"
+    echo "Power log base: ${PJ_BASE}"
+  else
+    PJ_BASE=""
+  fi
+
+  if [[ "$USE_GPU_MONITOR" == "true" ]]; then
+    GPU_LOG="${GPU_MONITOR_DIR}/${REL_SAFE}.csv"
+    echo "GPU log file: $GPU_LOG"
+  else
+    GPU_LOG=""
+  fi
+
   CMD=("/home/moveEnetFlow/build/moveEnetOFK_offline"
     --data_file "$LOG_FILE"
     --output_csv "$OUT_CSV"
@@ -247,6 +258,10 @@ for LOG_FILE in "${LOG_FILES[@]}"; do
     --muV "$MEAS_UV"
     --roi "$ROI"
     --checkpoint_path "$CHECKPOINT_PATH"
+    --pwrjlr_file "$PJ_BASE"
+    --gpu_file "$GPU_LOG"
+    --gpu_period_ms "$GPU_MONITOR_PERIOD_MS"
+    --gpu_index "$GPU_INDEX"
   )
 
   if [[ "$USE_LC" == "true" ]]; then
@@ -261,27 +276,11 @@ for LOG_FILE in "${LOG_FILES[@]}"; do
   if [[ "$NO_VIDEO" == "true" ]]; then
     CMD+=(--no_video)
   fi
-  if [[ "$USE_GPU_MONITOR" == "true" ]]; then
-    GPU_LOG="${GPU_MONITOR_DIR}/${REL_SAFE}.csv"
-    CMD+=(--gpu_file "$GPU_LOG" --gpu_period_ms "$GPU_MONITOR_PERIOD_MS" --gpu_index "$GPU_INDEX")
-    echo "GPU log file: $GPU_LOG"
-  fi
-
-  if [[ "$USE_POWERJOULAR" == "true" ]]; then
-    PJ_BASE="${POWERJOULAR_DIR}/${REL_SAFE}"
-    echo "Power log base: ${PJ_BASE}"
-
-    "${CMD[@]}" &
-    RUN_PID=$!
-    powerjoular -l -c -p "$RUN_PID" -f "$PJ_BASE" -t "$POWERJOULAR_PERIOD"
-    wait "$RUN_PID"
-    RUN_STATUS=$?
-    if [[ $RUN_STATUS -ne 0 ]]; then
-      echo "Processing failed (exit ${RUN_STATUS}): $LOG_FILE"
-      exit "$RUN_STATUS"
-    fi
-  else
-    "${CMD[@]}"
+  "${CMD[@]}"
+  RUN_STATUS=$?
+  if [[ $RUN_STATUS -ne 0 ]]; then
+    echo "Processing failed (exit ${RUN_STATUS}): $LOG_FILE"
+    exit "$RUN_STATUS"
   fi
 done
 

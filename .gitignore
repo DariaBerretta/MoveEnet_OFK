@@ -28,3 +28,7 @@ moveEnetFlow/moveEnet_flowKalman.cpp
 moveEnetFlow/mp4_files
 moveEnetFlow/pwr_cpu_file
 moveEnetFlow/pwr_gpu_file
+moveEnetFlow/experiments/expA_accuracy_vs_network_period/plots
+moveEnetFlow/experiments/expB_accuracy_vs_flow_period/plots
+moveEnetFlow/experiments/expA_accuracy_vs_network_period/results
+moveEnetFlow/experiments/expB_accuracy_vs_flow_period/results

@@ -66,6 +66,32 @@ RUN cd $SOURCE_FOLDER && \
     cmake .. && make install -j$(nproc)
 
 RUN apt install iproute2 -y
+
+# Build and install OpenPose (CPU+GPU, no Python bindings needed)
+RUN apt update && apt install -y \
+    libprotobuf-dev \
+    protobuf-compiler \
+    libhdf5-dev \
+    libatlas-base-dev \
+    libgoogle-glog-dev \
+    libgflags-dev
+RUN cd $SOURCE_FOLDER && \
+    git clone https://github.com/CMU-Perceptual-Computing-Lab/openpose.git && \
+    cd openpose && \
+    git submodule update --init --recursive --remote && \
+    mkdir -p build && cd build && \
+    cmake -DCMAKE_BUILD_TYPE=Release \
+          -DBUILD_PYTHON=OFF \
+          -DUSE_CUDNN=ON \
+          -DDOWNLOAD_BODY_25_MODEL=ON \
+          -DDOWNLOAD_COCO_MODEL=ON \
+          -DDOWNLOAD_MPI_MODEL=ON \
+          -DDOWNLOAD_FACE_MODEL=OFF \
+          -DDOWNLOAD_HAND_MODEL=OFF \
+          .. && \
+    make -j$(nproc) && \
+    make install
+
 RUN apt autoremove && apt clean
 RUN rm -rf /tmp/* /var/lib/apt/lists/* /var/tmp/*
 

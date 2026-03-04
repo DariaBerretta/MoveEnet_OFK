@@ -4,7 +4,7 @@
 #include <opencv2/opencv.hpp>
 #include <string>
 
-#include <hpe-core/utility.h>
+#include "../models/RGB/utility.h"
 
 struct VisualizationContext
 {
@@ -23,6 +23,12 @@ bool initialiseVisualization(VisualizationContext &ctx,
 
 void renderVisualizationFrame(VisualizationContext &ctx,
                               const cv::Mat &eros_surface,
+                              bool pose_is_initialised,
+                              const hpecore::skeleton13 &filtered_pose,
+                              const hpecore::stampedPose &detected_pose,
+                              double tnow);
+void renderVisualizationFrameOP(VisualizationContext &ctx,
+                              const cv::Mat &frame,
                               bool pose_is_initialised,
                               const hpecore::skeleton13 &filtered_pose,
                               const hpecore::stampedPose &detected_pose,

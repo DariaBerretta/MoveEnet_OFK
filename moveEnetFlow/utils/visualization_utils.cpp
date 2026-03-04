@@ -73,7 +73,47 @@ void renderVisualizationFrame(VisualizationContext &ctx,
     eros_surface.convertTo(eros_vis, CV_8U);
     cv::GaussianBlur(eros_vis, eros_vis, {9, 9}, 0);
     cv::normalize(eros_vis, eros_vis, 0, 255, cv::NORM_MINMAX);
-    cv::cvtColor(eros_vis, ctx.canvas, cv::COLOR_GRAY2BGR);
+    if (eros_vis.channels() == 1) {
+        cv::cvtColor(eros_vis, ctx.canvas, cv::COLOR_GRAY2BGR);
+    } else {
+        ctx.canvas = eros_vis.clone();
+    }
+
+    if (pose_is_initialised) {
+        try {
+            hpecore::stampedPose pose_filtered;
+            pose_filtered.pose = filtered_pose;
+            pose_filtered.timestamp = tnow;
+            pose_filtered.conf = detected_pose.conf;
+            hpecore::drawSkeleton(ctx.canvas, pose_filtered, {255, 0, 0}, 3, 0.0);
+        } catch (const cv::Exception &) {
+        }
+    }
+
+    if (hpecore::poseNonZero(detected_pose.pose)) {
+        try {
+            hpecore::stampedPose pose_raw = detected_pose;
+            hpecore::drawSkeleton(ctx.canvas, pose_raw, {0, 0, 255}, 2, 0.0);
+        } catch (const cv::Exception &) {
+        }
+    }
+}
+
+void renderVisualizationFrameOP(VisualizationContext &ctx,
+                              const cv::Mat &frame,
+                              bool pose_is_initialised,
+                              const hpecore::skeleton13 &filtered_pose,
+                              const hpecore::stampedPose &detected_pose,
+                              double tnow)
+{
+    cv::Mat frame_vis;
+    frame.convertTo(frame_vis, CV_8U);
+    cv::normalize(frame_vis, frame_vis, 0, 255, cv::NORM_MINMAX);
+    if (frame_vis.channels() == 1) {
+        cv::cvtColor(frame_vis, ctx.canvas, cv::COLOR_GRAY2BGR);
+    } else {
+        ctx.canvas = frame_vis.clone();
+    }
 
     if (pose_is_initialised) {
         try {

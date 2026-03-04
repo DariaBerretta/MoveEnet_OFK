@@ -137,6 +137,7 @@ int main(int argc, char *argv[]){
         ss << std::left << std::setw(20) << "--output_period" << std::setw(12) << "<double>" << ": CSV output period (s), default 0.005\n";
         ss << std::left << std::setw(20) << "--net_period" << std::setw(12) << "<double>" << ": model update period\n";
         ss << std::left << std::setw(20) << "--flow_period" << std::setw(12) << "<double>" << ": optical flow update period\n";
+        ss << std::left << std::setw(20) << "--moveenet_only" << std::setw(12) << "" << ": disable optical-flow/KF velocity update and use MoveNet detections only\n";
         ss << std::left << std::setw(20) << "--h" << std::setw(12) << "<int>" << ": height of image\n";
         ss << std::left << std::setw(20) << "--w" << std::setw(12) << "<int>" << ": width of image\n";
         ss << std::left << std::setw(20) << "--pu" << std::setw(12) << "<double>" << ": KF process uncertainty\n";
@@ -160,11 +161,12 @@ int main(int argc, char *argv[]){
     }
 
     // Read parameters from command line with default values
-    std::string datapath_file = rf.check("data_file", Value("/data/new_scarfGNN_full/raw/cam2_S8_Discussion/ch0dvs/data.log")).asString();
+    std::string datapath_file = rf.check("data_file", Value("/data/moveEnet_test/raw/cam2_S1_Phoning/ch0dvs/data.log")).asString();
     std::string output_file = rf.check("output_file", Value("/home/scarf_images/")).asString();
     double output_period = rf.check("output_period", Value(0.005)).asFloat64();                    // CSV write period
     double net_period = rf.check("net_period", Value(0.05)).asFloat64();                            // Range from 5ms to 100ms -> 200 Hz to 10 Hz   
     double flow_period = rf.check("flow_period", Value(0.005)).asFloat64();                         // Range from 5ms to 100ms -> 200 Hz to 10 Hz
+    bool moveenet_only = rf.check("moveenet_only");                                                  // If true, skip optical-flow/KF velocity update
     cv::Size res(rf.check("w", Value(640)).asInt32(), rf.check("h", Value(480)).asInt32());
     double procU = rf.check("pu", Value(1e-1)).asFloat64();                                         // Process uncertainty
     double measUD = rf.check("muD", Value(1e-4)).asFloat64();                                       // Measurement uncertainty (position)
@@ -172,13 +174,14 @@ int main(int argc, char *argv[]){
     int roiSize = rf.check("roi", Value(20)).asInt32();                                             // ROI size for velocity estimation
     bool latency_compensation = rf.check("use_lc", Value(false)).asBool();                          // Latency compensation flag
     bool is_visualize = rf.check("vis");                                                            // Visualization flag
-    std::string output_csv = rf.check("output_csv", Value("/home/moveEnetFlow/csv_file/test_pwr_cpugpu.csv")).asString();
+    std::string output_csv = rf.check("output_csv", Value("/home/moveEnetFlow/csv_file/single_test/20260223_test1.csv")).asString();
     bool include_velocities = rf.check("include_velocities");
     bool no_csv = rf.check("no_csv");
     std::string output_video = rf.check("output_video", Value("")).asString();
     bool no_video = rf.check("no_video");
-    std::string powerjoular_file = rf.check("pwrjlr_file", Value("/home/moveEnetFlow/pwr_cpu_file/testcpu_pwr")).asString();
-    std::string gpu_monitor_file = rf.check("gpu_file", Value("/home/moveEnetFlow/pwr_gpu_file/testgpu_pwr")).asString();
+    // std::string powerjoular_file = rf.check("pwrjlr_file", Value("/home/moveEnetFlow/pwr_cpu_file/single_test/20260223_testcpu_pwr")).asString();
+    std::string powerjoular_file = rf.check("pwrjlr_file", Value("")).asString();
+    std::string gpu_monitor_file = rf.check("gpu_file", Value("/home/moveEnetFlow/pwr_gpu_file/single_test/20260223_testgpu_pwr")).asString();
     int gpu_monitor_period_ms = rf.check("gpu_period_ms", Value(5)).asInt32();
     int gpu_monitor_index = rf.check("gpu_index", Value(0)).asInt32();
 
@@ -377,14 +380,16 @@ int main(int argc, char *argv[]){
             
             if (state.poseIsInitialised())
             {
-                // Estimate velocities from SAE surface using current filtered pose
-                jvs = velocity_estimator.multi_area_velocity(sae_handler.getSurface(), tnow, state.query(), roiSize);
-                
-                // Update Kalman filter with velocity (prediction step with optical flow)
-                state.setVelocity(jvs);
-                state.updateFromVelocity(jvs, tnow);
-                
-                // Get the filtered pose from Kalman filter
+                if (!moveenet_only) {
+                    // Estimate velocities from SAE surface using current filtered pose
+                    jvs = velocity_estimator.multi_area_velocity(sae_handler.getSurface(), tnow, state.query(), roiSize);
+
+                    // Update Kalman filter with velocity (prediction step with optical flow)
+                    state.setVelocity(jvs);
+                    state.updateFromVelocity(jvs, tnow);
+                }
+
+                // Query current pose. In MoveNet-only mode this is detection-corrected KF state without OF update.
                 filtered_pose = state.query();
             }
             else
