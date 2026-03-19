@@ -1,3 +1,13 @@
+# Copyright (c) 2026 Istituto Italiano di Tecnologia
+# Author: Daria Berretta
+
+# Permission is granted to use, copy, modify, and distribute this software 
+# for non-commercial purposes only. Commercial use is strictly prohibited 
+# without prior written permission from the author.
+
+# To request a commercial license, contact: arren.glover@iit.it
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.
+
 import numpy as np
 
 class CARF:
