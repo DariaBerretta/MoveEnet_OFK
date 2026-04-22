@@ -10,10 +10,16 @@
 #include <hpe-core/motion.h>                // For hpecore::pwtripletvelocity
 #include <hpe-core/fusion.h>                // For hpecore::multiJointLatComp
 #include <hpe-core/representations.h>       // For hpecore::SAE
+#include <algorithm>
+#include <array>
+#include <cmath>
 #include <fstream>
 #include <iomanip>
-#include <vector>
+#include <iostream>
+#include <limits>
+#include <regex>
 #include <sstream>
+#include <vector>
 #include <unistd.h>
 #include <cstdlib>
 #include "utils/power_monitor.h"
@@ -23,6 +29,194 @@ using namespace yarp::os;
 using namespace yarp::sig;
 using std::string;
 using yarp::os::Value;
+
+namespace {
+
+constexpr int kNumJoints = 13;
+constexpr int kNumCoords = kNumJoints * 2;
+const std::regex kSkltRegex(R"(^\s*\d+\s+([0-9eE+\-\.]+)\s+SKLT\s+\(([^)]*)\).*$)");
+
+struct GTSeries {
+    std::vector<double> ts;
+    std::vector<std::array<double, kNumCoords>> coords;
+};
+
+struct PredSample {
+    double ts{0.0};
+    std::array<double, kNumCoords> coords{};
+};
+
+bool deriveGTPathFromDataFile(const std::string &data_file, std::string &gt_file_out)
+{
+    const std::string suffix = "/ch0dvs/data.log";
+    if (data_file.size() < suffix.size() ||
+        data_file.compare(data_file.size() - suffix.size(), suffix.size(), suffix) != 0) {
+        return false;
+    }
+
+    gt_file_out = data_file.substr(0, data_file.size() - suffix.size()) + "/ch0GT200Hzskeleton/data.log";
+    return true;
+}
+
+bool loadGTSeries(const std::string &gt_file, GTSeries &out, std::string &error_msg)
+{
+    std::ifstream ifs(gt_file);
+    if (!ifs.is_open()) {
+        error_msg = "could not open GT file: " + gt_file;
+        return false;
+    }
+
+    out.ts.clear();
+    out.coords.clear();
+
+    std::string line;
+    size_t line_no = 0;
+    while (std::getline(ifs, line)) {
+        ++line_no;
+        std::smatch match;
+        if (!std::regex_match(line, match, kSkltRegex)) {
+            continue;
+        }
+
+        double ts = 0.0;
+        try {
+            ts = std::stod(match[1].str());
+        } catch (const std::exception &) {
+            error_msg = "invalid GT timestamp at line " + std::to_string(line_no);
+            return false;
+        }
+
+        std::istringstream coord_stream(match[2].str());
+        std::array<double, kNumCoords> c{};
+        for (int i = 0; i < kNumCoords; ++i) {
+            if (!(coord_stream >> c[i])) {
+                error_msg = "invalid GT coordinate count at line " + std::to_string(line_no);
+                return false;
+            }
+        }
+        double extra = 0.0;
+        if (coord_stream >> extra) {
+            error_msg = "too many GT coordinates at line " + std::to_string(line_no);
+            return false;
+        }
+
+        if (!out.ts.empty() && ts <= out.ts.back()) {
+            error_msg = "GT timestamps are not strictly increasing";
+            return false;
+        }
+
+        out.ts.push_back(ts);
+        out.coords.push_back(c);
+    }
+
+    if (out.ts.empty()) {
+        error_msg = "no valid SKLT entries found in GT file";
+        return false;
+    }
+
+    return true;
+}
+
+double interpWithPaddedEnds(const std::vector<double> &x, const std::vector<double> &y, double query)
+{
+    if (query <= x.front()) {
+        return y.front();
+    }
+    if (query >= x.back()) {
+        return y.back();
+    }
+
+    auto it_hi = std::upper_bound(x.begin(), x.end(), query);
+    const size_t idx_hi = static_cast<size_t>(it_hi - x.begin());
+    const size_t idx_lo = idx_hi - 1;
+
+    const double x0 = x[idx_lo];
+    const double x1 = x[idx_hi];
+    const double y0 = y[idx_lo];
+    const double y1 = y[idx_hi];
+
+    if (x1 <= x0) {
+        return y1;
+    }
+
+    const double alpha = (query - x0) / (x1 - x0);
+    return y0 + alpha * (y1 - y0);
+}
+
+bool interpolateGTAtPredTimestamps(const GTSeries &gt,
+                                   const std::vector<PredSample> &pred_samples,
+                                   std::vector<std::array<double, kNumCoords>> &gt_interp,
+                                   std::string &error_msg)
+{
+    if (pred_samples.empty()) {
+        error_msg = "no prediction samples available";
+        return false;
+    }
+    if (gt.ts.empty()) {
+        error_msg = "GT is empty";
+        return false;
+    }
+
+    std::vector<double> ts_pad;
+    ts_pad.reserve(gt.ts.size() + 2);
+    ts_pad.push_back(0.0);
+    ts_pad.insert(ts_pad.end(), gt.ts.begin(), gt.ts.end());
+    ts_pad.push_back(gt.ts.back() + 1.0);
+
+    gt_interp.assign(pred_samples.size(), {});
+    std::vector<double> axis_pad(ts_pad.size(), 0.0);
+    for (int c = 0; c < kNumCoords; ++c) {
+        axis_pad[0] = gt.coords.front()[c];
+        for (size_t i = 0; i < gt.coords.size(); ++i) {
+            axis_pad[i + 1] = gt.coords[i][c];
+        }
+        axis_pad.back() = gt.coords.back()[c];
+
+        for (size_t i = 0; i < pred_samples.size(); ++i) {
+            gt_interp[i][c] = interpWithPaddedEnds(ts_pad, axis_pad, pred_samples[i].ts);
+        }
+    }
+
+    return true;
+}
+
+bool computeMPJPE(const std::vector<PredSample> &pred_samples,
+                  const GTSeries &gt,
+                  double &mpjpe_px,
+                  std::string &error_msg)
+{
+    std::vector<std::array<double, kNumCoords>> gt_interp;
+    if (!interpolateGTAtPredTimestamps(gt, pred_samples, gt_interp, error_msg)) {
+        return false;
+    }
+
+    long double sum_error = 0.0L;
+    size_t n_points = 0;
+    for (size_t i = 0; i < pred_samples.size(); ++i) {
+        for (int j = 0; j < kNumJoints; ++j) {
+            const double dx = pred_samples[i].coords[2 * j] - gt_interp[i][2 * j];
+            const double dy = pred_samples[i].coords[2 * j + 1] - gt_interp[i][2 * j + 1];
+            sum_error += std::sqrt(dx * dx + dy * dy);
+            ++n_points;
+        }
+    }
+
+    if (n_points == 0) {
+        error_msg = "no valid prediction points available for MPJPE";
+        return false;
+    }
+
+    const double mpjpe = static_cast<double>(sum_error / static_cast<long double>(n_points));
+    if (!std::isfinite(mpjpe)) {
+        error_msg = "computed MPJPE is not finite";
+        return false;
+    }
+
+    mpjpe_px = mpjpe;
+    return true;
+}
+
+} // namespace
 
 /* BEFORE TO OPEN THE DOCKER REMBER TO:
  * 1. xhost +local:docker
@@ -130,11 +324,11 @@ int main(int argc, char *argv[]){
 
     if(rf.check("help")) {
         std::stringstream ss;
-        ss << "Usage: moveEnetOFK_offline [options]\n\n";
+        ss << "Usage: moveEnetOFK_offline_mpjpe [options]\n\n";
         ss << "Options:\n";
         ss << std::left << std::setw(20) << "--data_file" << std::setw(12) << "<string>" << ": path to input dataset file\n";
-        ss << std::left << std::setw(20) << "--output_file" << std::setw(12) << "<string>" << ": output path file\n";
-        ss << std::left << std::setw(20) << "--output_period" << std::setw(12) << "<double>" << ": CSV output period (s), default 0.005\n";
+        ss << std::left << std::setw(20) << "--gt_file" << std::setw(12) << "<string>" << ": optional GT path; defaults to inferred .../ch0GT200Hzskeleton/data.log\n";
+        ss << std::left << std::setw(20) << "--output_period" << std::setw(12) << "<double>" << ": MPJPE sampling period (s), default 0.005\n";
         ss << std::left << std::setw(20) << "--net_period" << std::setw(12) << "<double>" << ": model update period\n";
         ss << std::left << std::setw(20) << "--flow_period" << std::setw(12) << "<double>" << ": optical flow update period\n";
         ss << std::left << std::setw(20) << "--moveenet_only" << std::setw(12) << "" << ": disable optical-flow/KF velocity update and use MoveNet detections only\n";
@@ -146,15 +340,11 @@ int main(int argc, char *argv[]){
         ss << std::left << std::setw(20) << "--roi" << std::setw(12) << "<int>" << ": ROI size for velocity estimation\n";
         ss << std::left << std::setw(20) << "--use_lc" << std::setw(12) << "<bool>" << ": use latency compensation in KF\n";
         ss << std::left << std::setw(20) << "--vis" << std::setw(12) << "" << ": enable on-screen visualization\n";
-        ss << std::left << std::setw(20) << "--output_csv" << std::setw(12) << "<string>" << ": path to output csv file\n";
-        ss << std::left << std::setw(20) << "--include_velocities" << std::setw(12) << "" << ": when eval_format is set, also log velocities\n";
-        ss << std::left << std::setw(20) << "--no_csv" << std::setw(12) << "" << ": skip CSV logging\n";
         ss << std::left << std::setw(20) << "--output_video" << std::setw(12) << "<string>" << ": path to output video file (.mp4)\n";
         ss << std::left << std::setw(20) << "--no_video" << std::setw(12) << "" << ": disable video output\n";
         ss << std::left << std::setw(20) << "--pwrjlr_file" << std::setw(12) << "<string>" << ": base path for PowerJoular output (no extension)\n";
         ss << std::left << std::setw(20) << "--gpu_file" << std::setw(12) << "<string>" << ": output CSV file for NVIDIA GPU telemetry\n";
         ss << std::left << std::setw(20) << "--gpu_period_ms" << std::setw(12) << "<int>" << ": nvidia-smi sampling period in ms (default 5)\n";
-        
         ss << std::left << std::setw(20) << "--gpu_index" << std::setw(12) << "<int>" << ": NVIDIA GPU index to monitor (default 0)\n";
         yInfo() << ss.str();
         // exit after printing help
@@ -162,22 +352,19 @@ int main(int argc, char *argv[]){
     }
 
     // Read parameters from command line with default values
-    std::string datapath_file = rf.check("data_file", Value("/data/moveEnet_test/raw/S1_1_1/ch2dvs/data.log")).asString();
-    std::string output_file = rf.check("output_file", Value("/home/scarf_images/")).asString();
-    double output_period = rf.check("output_period", Value(0.005)).asFloat64();                    // CSV write period
+    std::string datapath_file = rf.check("data_file", Value("/data/moveEnet_test/raw/cam2_S1_Directions/ch0dvs/data.log")).asString();
+    std::string gt_file = rf.check("gt_file", Value("")).asString();
+    double output_period = rf.check("output_period", Value(0.005)).asFloat64();                    // MPJPE sampling period
     double net_period = rf.check("net_period", Value(0.05)).asFloat64();                            // Range from 5ms to 100ms -> 200 Hz to 10 Hz   
     double flow_period = rf.check("flow_period", Value(0.005)).asFloat64();                         // Range from 5ms to 100ms -> 200 Hz to 10 Hz
     bool moveenet_only = rf.check("moveenet_only");                                                  // If true, skip optical-flow/KF velocity update
     cv::Size res(rf.check("w", Value(640)).asInt32(), rf.check("h", Value(480)).asInt32());
-    double procU = rf.check("pu", Value(0.77)).asFloat64();                                         // Process uncertainty
-    double measUD = rf.check("muD", Value(0.06)).asFloat64();                                       // Measurement uncertainty (position)
-    double measUV = rf.check("muV", Value(0.97)).asFloat64();                                        // Measurement uncertainty (velocity)
+    double procU = rf.check("pu", Value(1e-1)).asFloat64();                                         // Process uncertainty
+    double measUD = rf.check("muD", Value(1e-4)).asFloat64();                                       // Measurement uncertainty (position)
+    double measUV = rf.check("muV", Value(0.0)).asFloat64();                                        // Measurement uncertainty (velocity)
     int roiSize = rf.check("roi", Value(20)).asInt32();                                             // ROI size for velocity estimation
     bool latency_compensation = rf.check("use_lc", Value(false)).asBool();                          // Latency compensation flag
     bool is_visualize = rf.check("vis");                                                            // Visualization flag
-    std::string output_csv = rf.check("output_csv", Value("/home/moveEnetFlow/csv_file/single_test/20260223_test1.csv")).asString();
-    bool include_velocities = rf.check("include_velocities");
-    bool no_csv = rf.check("no_csv");
     std::string output_video = rf.check("output_video", Value("")).asString();
     bool no_video = rf.check("no_video");
     // std::string powerjoular_file = rf.check("pwrjlr_file", Value("/home/moveEnetFlow/pwr_cpu_file/single_test/20260223_testcpu_pwr")).asString();
@@ -185,6 +372,19 @@ int main(int argc, char *argv[]){
     std::string gpu_monitor_file = rf.check("gpu_file", Value("/home/moveEnetFlow/pwr_gpu_file/single_test/20260223_testgpu_pwr")).asString();
     int gpu_monitor_period_ms = rf.check("gpu_period_ms", Value(5)).asInt32();
     int gpu_monitor_index = rf.check("gpu_index", Value(0)).asInt32();
+
+    std::string resolved_gt_file = gt_file;
+    if (resolved_gt_file.empty() && !deriveGTPathFromDataFile(datapath_file, resolved_gt_file)) {
+        yError() << "Could not infer GT path from --data_file. Expected suffix /ch0dvs/data.log";
+        return -1;
+    }
+
+    GTSeries gt_series;
+    std::string gt_error;
+    if (!loadGTSeries(resolved_gt_file, gt_series, gt_error)) {
+        yError() << "GT load failed:" << gt_error;
+        return -1;
+    }
 
     PowerMonitor power_monitor;
     PowerMonitorConfig power_cfg;
@@ -198,31 +398,8 @@ int main(int argc, char *argv[]){
     }
 
 
-    // ===== PREPARE CSV, VIDEO, AND VISUALIZATION RESOURCES =====
-    std::ofstream csv_file;                             // CSV file stream for logging results
-    std::vector<std::string> csv_buffer;                // store rows for deferred write
+    // ===== PREPARE VIDEO AND VISUALIZATION RESOURCES =====
     VisualizationContext vis_ctx;                      // Visualization and video writer resources
-
-    // CSV writer setup
-    if (!no_csv) {
-        csv_file.open(output_csv);
-        if (!csv_file.is_open()) {
-            yError() << "Could not open CSV file for writing:" << output_csv;
-            return -1;
-        }
-        yInfo() << "CSV logging enabled ->" << output_csv;
-        csv_file << "timestamp,latency";
-        for (int j = 0; j < 13; j++) {
-            csv_file << ",joint" << j << "_x,joint" << j << "_y";
-        }
-        if (include_velocities) {
-            for (int j = 0; j < 13; j++) {
-                csv_file << ",joint" << j << "_vx,joint" << j << "_vy";
-            }
-        }
-        csv_file << "\n";
-        csv_file.flush();
-    }
 
     // Visualization and video setup
     if (!initialiseVisualization(vis_ctx, res, is_visualize, no_video, output_video, datapath_file, output_period)) {
@@ -258,14 +435,14 @@ int main(int argc, char *argv[]){
     }
 
     // MoveEnet checkpoint path
-    // std::string checkpoint_path = rf.check("checkpoint_path", Value("/usr/local/src/hpe-core/example/movenet/models/e97_valacc0.81209.pth")).asString();
-    std::string checkpoint_path = rf.check("checkpoint_path", Value("/usr/local/src/hpe-core/example/movenet/models/dhp19_allcams_e33_valacc0.87996.pth")).asString();
+    std::string checkpoint_path = rf.check("checkpoint_path", Value("/usr/local/src/hpe-core/example/movenet/models/e97_valacc0.81209.pth")).asString();
+
     // Detection frequency detF derived from moveEnet update period
     double detF = 1.0 / net_period;                     // Detection frequency in Hz
     double tnow = 0.0;                                  // Current simulation time
     double next_net_upd = net_period;                   // event-time threshold for next MoveNet call
     double next_flow_upd = flow_period;                 // event-time threshold for next OF+KF update
-    double next_csv_upd = output_period;               // event-time threshold for next CSV row
+    double next_sample_upd = output_period;            // event-time threshold for next MPJPE sample
     double next_vis_upd = output_period;               // event-time threshold for next visualization frame
 
     // Load event data from file 
@@ -284,8 +461,8 @@ int main(int argc, char *argv[]){
         return -1;
     }
 
-    std::string eros_out = "/moveEnetOFK_offline/eros:o_" + std::to_string(::getpid()); 
-    std::string movenet_in = "/moveEnetOFK_offline/movenet:i_" + std::to_string(::getpid());
+    std::string eros_out = "/moveEnetOFK_offline_mpjpe/eros:o_" + std::to_string(::getpid()); 
+    std::string movenet_in = "/moveEnetOFK_offline_mpjpe/movenet:i_" + std::to_string(::getpid());
 
     // Clear any lingering YARP port registrations
     system("pkill -f movenet_online.py >/dev/null 2>&1");
@@ -318,6 +495,7 @@ int main(int argc, char *argv[]){
     bool pending_detection = false;             // true when a new MoveNet result is waiting to correct the KF
     hpecore::skeleton13 jvs;                    // last known joint velocities (persistent across iterations)
     hpecore::skeleton13 filtered_pose;          // last known filtered pose (persistent across iterations)
+    std::vector<PredSample> pred_samples;
 
     while (true) {
         
@@ -401,24 +579,18 @@ int main(int argc, char *argv[]){
         }
 
         const bool snapshot_ready = did_flow_update && state.poseIsInitialised();
-        // CSV logging at output_period rate, independent of flow/MoveNet updates
+        // MPJPE sampling at output_period rate, independent of flow/MoveNet updates
         // Advance timer unconditionally so it doesn't stall before pose is initialised
-        if (tnow >= next_csv_upd) {
-            next_csv_upd += output_period;
-            if (state.poseIsInitialised() && csv_file.is_open()) {
-                std::ostringstream row;
-                row << std::fixed << std::setprecision(6) << tnow;
-                double lat = (detected_pose.timestamp > 0) ? detected_pose.delay : 0.0;
-                row << "," << lat;
-                for (int j = 0; j < 13; j++) {
-                    row << "," << filtered_pose[j].u << "," << filtered_pose[j].v;
+        if (tnow >= next_sample_upd) {
+            next_sample_upd += output_period;
+            if (state.poseIsInitialised()) {
+                PredSample sample;
+                sample.ts = tnow;
+                for (int j = 0; j < kNumJoints; ++j) {
+                    sample.coords[2 * j] = filtered_pose[j].u;
+                    sample.coords[2 * j + 1] = filtered_pose[j].v;
                 }
-                if (include_velocities) {
-                    for (int j = 0; j < 13; j++) {
-                        row << "," << jvs[j].u << "," << jvs[j].v;
-                    }
-                }
-                csv_buffer.push_back(row.str());
+                pred_samples.push_back(sample);
             }
         }
 
@@ -437,14 +609,17 @@ int main(int argc, char *argv[]){
     }
 
 
-    // Cleanup
-    if (csv_file.is_open()) {
-        for (const auto &line : csv_buffer) {
-            csv_file << line << "\n";
-        }
-        csv_file.close();
-        yInfo() << "CSV rows written:" << csv_buffer.size() << "->" << output_csv;
+    int exit_code = 0;
+    double mpjpe_px = std::numeric_limits<double>::quiet_NaN();
+    std::string mpjpe_error;
+    if (!computeMPJPE(pred_samples, gt_series, mpjpe_px, mpjpe_error)) {
+        yError() << "Failed to compute MPJPE:" << mpjpe_error;
+        exit_code = -1;
+    } else {
+        std::cout << std::fixed << std::setprecision(6) << "mpjpe_px=" << mpjpe_px << std::endl;
     }
+
+    // Cleanup
     power_monitor.stop();
     mn_handler.close();
     yarp::os::Network::disconnect("/movenet/sklt:o", movenet_in, "fast_tcp");
@@ -456,5 +631,5 @@ int main(int argc, char *argv[]){
     // also terminate any parent HPO/evaluation script running this binary)
     system("pkill -f movenet_online.py >/dev/null 2>&1");
 
-    return 0;
+    return exit_code;
 }

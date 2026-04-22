@@ -8,7 +8,18 @@ ARG EVENT_DRIVEN_VERSION=master
 ARG HPE_VERSION=main
 
 ENV DEBIAN_FRONTEND noninteractive
-RUN apt update  
+RUN apt update 
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    software-properties-common curl ca-certificates gnupg \
+ && add-apt-repository ppa:deadsnakes/ppa -y \
+ && apt-get update && apt-get install -y --no-install-recommends \
+    python3.12 python3.12-venv python3.12-dev \
+ && python3.12 -m ensurepip --upgrade \
+ && python3.12 -m pip install --upgrade pip setuptools wheel \
+ && python3.12 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:${PATH}"
+
 RUN apt install -y build-essential libssl-dev software-properties-common \
     cmake cmake-curses-gui vim nano git sudo openssh-client git \
     libboost-all-dev libmysqlclient-dev ffmpeg libsm6 libxext6 libcanberra-gtk-module \

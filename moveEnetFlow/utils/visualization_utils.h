@@ -3,8 +3,7 @@
 
 #include <opencv2/opencv.hpp>
 #include <string>
-
-#include "../models/RGB/utility.h"
+#include <hpe-core/utility.h>
 
 struct VisualizationContext
 {

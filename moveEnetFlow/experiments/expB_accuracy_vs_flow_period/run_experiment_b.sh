@@ -16,7 +16,11 @@ DATA_FILE=""  # Optional single DVS file override (empty = use all in DATA_ROOT)
 CHECKPOINT_PATH="/usr/local/src/hpe-core/example/movenet/models/e97_valacc0.81209.pth"
 
 # Fixed timing for Experiment B (as requested)
-NETWORK_PERIOD="0.1"   # 50 Hz detections
+# NETWORK_PERIOD="0.02"   # 50 Hz detections
+# NETWORK_PERIOD="0.05"   # 20 Hz detections
+NETWORK_PERIOD="0.1"    # 10 Hz detections
+
+
 OUTPUT_PERIOD="0.005"   # 200 Hz output logging
 
 # Run tag to keep outputs from different configurations separate
@@ -25,9 +29,9 @@ RUN_TAG="net_${NETWORK_PERIOD//./p}"
 # Image and KF parameters
 IMG_W="640"
 IMG_H="480"
-PROC_U="1e-1"
-MEAS_UD="1e-4"
-MEAS_UV="0.0"
+PROC_U="0.77"
+MEAS_UD="0.06"
+MEAS_UV="0.97"
 ROI="20"
 
 # Feature flags
@@ -46,9 +50,9 @@ Options:
   --output_period <float>    CSV output period (default: 0.005)
   --w <int>                  Image width (default: 640)
   --h <int>                  Image height (default: 480)
-  --pu <float>               KF process uncertainty (default: 1e-1)
-  --muD <float>              KF position measurement uncertainty (default: 1e-4)
-  --muV <float>              KF velocity measurement uncertainty (default: 0.0)
+  --pu <float>               KF process uncertainty (default: 0.77)
+  --muD <float>              KF position measurement uncertainty (default: 0.06)
+  --muV <float>              KF velocity measurement uncertainty (default: 0.97)
   --roi <int>                Velocity ROI size (default: 20)
   --use_lc                   Enable latency compensation
   --help                     Show this help

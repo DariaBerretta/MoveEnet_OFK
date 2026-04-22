@@ -125,7 +125,6 @@ void renderVisualizationFrameOP(VisualizationContext &ctx,
         } catch (const cv::Exception &) {
         }
     }
-
     if (hpecore::poseNonZero(detected_pose.pose)) {
         try {
             hpecore::stampedPose pose_raw = detected_pose;

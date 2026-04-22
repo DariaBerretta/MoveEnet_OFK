@@ -2,11 +2,11 @@
 set -euo pipefail
 
 # Experiment directory structure
-EXP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"           # Current experiment directory
+EXP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"           # Current experiment directory --> {BASH_SOURCE[0]} is the path to the script itself.
 RAW_DIR="$EXP_DIR/results/raw"                                    # Output directory for raw CSV results
 LOG_DIR="$EXP_DIR/results/logs"                                   # Output directory for execution logs
 
-# Network periods to test (in seconds) - corresponds to detection rates: 100Hz, 50Hz, 20Hz, 10Hz, 5Hz, 2Hz
+# Network periods (MoveEnet) to test (in seconds) - corresponds to detection rates: 100Hz, 50Hz, 20Hz, 10Hz, 5Hz, 2Hz
 PERIODS=("0.01" "0.02" "0.05" "0.1" "0.2" "0.5")
 
 # Core executable and data paths
@@ -22,10 +22,13 @@ IMG_W="640"                                                        # Event camer
 IMG_H="480"                                                        # Event camera image height in pixels
 
 # Kalman filter parameters for pose tracking
-PROC_U="1e-1"                                                      # Process noise uncertainty (motion model uncertainty)
-MEAS_UD="1e-4"                                                     # Position measurement uncertainty (detection accuracy)
-MEAS_UV="0.0"                                                      # Velocity measurement uncertainty (set to 0 = no direct velocity measurements)
-ROI="20"                                                           # Region of interest size for velocity estimation (pixels)
+# PROC_U="1e-1"                                                      # Process noise uncertainty (motion model uncertainty)
+PROC_U="0.77"                                                        
+# MEAS_UD="1e-4"                                                     # Position measurement uncertainty (detection accuracy)
+MEAS_UD="0.06"                                                    
+# MEAS_UV="0.0"                                                      # Velocity measurement uncertainty (set to 0 = no direct velocity measurements)
+MEAS_UV="0.97"                                                      
+ROI="20"                                                             # Region of interest size for velocity estimation (pixels)
 
 # Feature flags
 USE_LC="false"                                                     # Enable/disable latency compensation
@@ -36,23 +39,23 @@ Usage: $(basename "$0") [options]
 
 Options:
   --binary <path>            Path to moveEnetOFK_offline binary
-  --data_root <path>         Dataset root containing */ch0dvs/data.log (default: /data/new_scarfGNN_full/raw)
+  --data_root <path>         Dataset root containing */ch0dvs/data.log (default: /data/moveEnet_test/raw/)
   --data_file <path>         Optional single DVS file override (ch0dvs/data.log)
   --checkpoint_path <path>   MoveNet checkpoint
   --flow_period <float>      Optical-flow update period (default: 0.001)
   --output_period <float>    CSV output period (default: 0.005)
   --w <int>                  Image width (default: 640)
   --h <int>                  Image height (default: 480)
-  --pu <float>               KF process uncertainty (default: 1e-1)
-  --muD <float>              KF position measurement uncertainty (default: 1e-4)
-  --muV <float>              KF velocity measurement uncertainty (default: 0.0)
+  --pu <float>               KF process uncertainty (default: 0.77)
+  --muD <float>              KF position measurement uncertainty (default: 0.06)
+  --muV <float>              KF velocity measurement uncertainty (default: 0.97)
   --roi <int>                Velocity ROI size (default: 20)
   --use_lc                   Enable latency compensation
   --help                     Show this help
 USAGE
 }
 
-while [[ $# -gt 0 ]]; do
+while [[ $# -gt 0 ]]; do                                    # rocesses command-line arguments passed to the script
   case "$1" in
     --binary) BINARY="$2"; shift 2 ;;
     --data_root) DATA_ROOT="$2"; shift 2 ;;
@@ -132,8 +135,8 @@ for NP in "${PERIODS[@]}"; do
       REL_STEM="${REL_STEM//\//__}"
     fi
 
-    OUT_OFK="$NP_DIR/${REL_STEM}__moveenet_ofk_np_${SAFE_NP}.csv"
-    OUT_MN="$NP_DIR/${REL_STEM}__moveenet_only_np_${SAFE_NP}.csv"
+    OUT_OFK="$NP_DIR/${REL_STEM}_moveenet_ofk_np_${SAFE_NP}.csv"
+    OUT_MN="$NP_DIR/${REL_STEM}_moveenet_np_${SAFE_NP}.csv"
 
     COMMON_ARGS=(
       --data_file "$LOG_FILE"
@@ -155,11 +158,11 @@ for NP in "${PERIODS[@]}"; do
 
     echo "  -> [$REL_STEM] MoveEnet + OFK"
     "$BINARY" "${COMMON_ARGS[@]}" --output_csv "$OUT_OFK" \
-      > "$LOG_DIR/${REL_STEM}__ofk_np_${SAFE_NP}.log" 2>&1
+      > "$LOG_DIR/${REL_STEM}_ofk_np_${SAFE_NP}.log" 2>&1
 
     echo "  -> [$REL_STEM] MoveEnet only"
     "$BINARY" "${COMMON_ARGS[@]}" --moveenet_only --output_csv "$OUT_MN" \
-      > "$LOG_DIR/${REL_STEM}__moveenet_only_np_${SAFE_NP}.log" 2>&1
+      > "$LOG_DIR/${REL_STEM}_moveenet_only_np_${SAFE_NP}.log" 2>&1
   done
 
 done
