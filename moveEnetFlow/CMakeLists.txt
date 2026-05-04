@@ -56,26 +56,13 @@ target_link_libraries(moveEnetOFK_offline_mpjpe
     ev::event-driven
     hpe-core::hpe-core
 )
-
-# Build EventPointPose offline pipeline (detection only, no optical flow / KF)
-add_executable(EventPointPose_offline
-    EventPointPose_offline.cpp
-    utils/power_monitor.cpp
-    utils/visualization_utils.cpp
-)
-target_link_libraries(EventPointPose_offline
-    ${YARP_LIBRARIES}
-    ${OpenCV_LIBS}
-    ev::event-driven
-    hpe-core::hpe-core
-)
-
 # Build OpenPose offline pipeline (YARP-based Python detection, no OpenPose C++ library needed)
 add_executable(OpenPose_offline
     OpenPose_offline.cpp
     utils/power_monitor.cpp
     utils/visualization_utils.cpp
 )
+
 target_link_libraries(OpenPose_offline
     ${YARP_LIBRARIES}
     ${OpenCV_LIBS}

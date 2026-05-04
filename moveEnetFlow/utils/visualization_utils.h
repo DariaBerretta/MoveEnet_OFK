@@ -8,6 +8,7 @@
 struct VisualizationContext
 {
     cv::Mat canvas;
+    cv::Size display_size;
     cv::VideoWriter video_writer;
     bool visualize{false};
 };

@@ -10,6 +10,14 @@ namespace
 {
 constexpr const char *kWindowName = "moveEnetOFK_offline";
 
+cv::Size liveDisplaySize(const cv::Size &res)
+{
+    if (res.width <= 0 || res.height <= 0) {
+        return res;
+    }
+    return res;
+}
+
 std::string buildDefaultVideoPath(const std::string &datapath_file)
 {
     std::time_t now = std::time(nullptr);
@@ -32,6 +40,7 @@ bool initialiseVisualization(VisualizationContext &ctx,
                              double output_period)
 {
     ctx.visualize = is_visualize;
+    ctx.display_size = liveDisplaySize(res);
 
     if (output_video.empty() && !no_video) {
         output_video = buildDefaultVideoPath(datapath_file);
@@ -43,10 +52,19 @@ bool initialiseVisualization(VisualizationContext &ctx,
 
     if (is_visualize) {
         cv::namedWindow(kWindowName, cv::WINDOW_NORMAL);
-        cv::resizeWindow(kWindowName, res);
+        cv::resizeWindow(kWindowName, ctx.display_size);
+        cv::Mat initial_frame = ctx.canvas.empty() ? cv::Mat(res, CV_8UC3, cv::Scalar(0, 0, 0)) : ctx.canvas;
+        cv::Mat display_frame;
+        if (ctx.display_size.area() > 0 && ctx.display_size != initial_frame.size()) {
+            cv::resize(initial_frame, display_frame, ctx.display_size, 0, 0, cv::INTER_LINEAR);
+        } else {
+            display_frame = initial_frame;
+        }
+        cv::imshow(kWindowName, display_frame);
+        cv::waitKey(1);
     }
 
-    if (!output_video.empty()) {
+    if (!output_video.empty() && !no_video) {
         std::filesystem::path video_path(output_video);
         std::filesystem::create_directories(video_path.parent_path());
 
@@ -54,6 +72,11 @@ bool initialiseVisualization(VisualizationContext &ctx,
         ctx.video_writer.open(output_video, cv::VideoWriter::fourcc('m', 'p', '4', 'v'), fps, res);
         if (!ctx.video_writer.isOpened()) {
             yError() << "Could not open video writer for:" << output_video;
+            if (is_visualize) {
+                yWarning() << "Continuing with live visualization only";
+                output_video.clear();
+                return true;
+            }
             return false;
         }
         yInfo() << "Video output enabled ->" << output_video << " at " << fps << " FPS";
@@ -147,7 +170,13 @@ bool showVisualizationFrame(VisualizationContext &ctx)
         return false;
     }
 
-    cv::imshow(kWindowName, ctx.canvas);
+    if (ctx.display_size.area() > 0 && ctx.display_size != ctx.canvas.size()) {
+        cv::Mat display_frame;
+        cv::resize(ctx.canvas, display_frame, ctx.display_size, 0, 0, cv::INTER_LINEAR);
+        cv::imshow(kWindowName, display_frame);
+    } else {
+        cv::imshow(kWindowName, ctx.canvas);
+    }
     char key_pressed = cv::waitKey(1);
     return key_pressed == '\e' || key_pressed == 'q';
 }

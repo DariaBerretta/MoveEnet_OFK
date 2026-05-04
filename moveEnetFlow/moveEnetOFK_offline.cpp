@@ -10,6 +10,7 @@
 #include <hpe-core/motion.h>                // For hpecore::pwtripletvelocity
 #include <hpe-core/fusion.h>                // For hpecore::multiJointLatComp
 #include <hpe-core/representations.h>       // For hpecore::SAE
+#include <algorithm>
 #include <fstream>
 #include <iomanip>
 #include <vector>
@@ -47,6 +48,8 @@ class offlineDetector
 {
 private:
     double period{0.001};  ///< Minimum interval between requests (sec) and last send timestamp
+    cv::Size sensor_size;  ///< Logical image size used by the C++ pipeline
+    cv::Size movenet_frame_size;  ///< Image size sent through YARP to MoveNet
 
     BufferedPort<ImageOf<PixelMono>> output_port;  ///< Port used to send images to MoveNet
     BufferedPort<Bottle> input_port;               ///< Port used to receive skeleton responses
@@ -58,9 +61,12 @@ public:
      * @param output_name YARP name for the port that sends frames to the model
      * @param input_name YARP name for the port that receives MoveNet skeletons
      * @param rate Requested number of model updates per second (must be > 0)
+     * @param logical_size Size of the event-camera canvas used by the C++ pipeline
+     * @param transport_size Size of the image sent to MoveNet over YARP
      * @return true if both ports opened successfully and rate was valid
      */
-    bool init(std::string output_name, std::string input_name, double rate)
+    bool init(std::string output_name, std::string input_name, double rate,
+              const cv::Size &logical_size, const cv::Size &transport_size)
     {
         if (!output_port.open(output_name))
             return false;
@@ -72,6 +78,8 @@ public:
             return false;
 
         period = 1.0 / rate;
+        sensor_size = logical_size;
+        movenet_frame_size = transport_size;
         return true;
     }
 
@@ -100,9 +108,23 @@ public:
 
         // transform latest_image into MoveNet-compatible monochrome frame
         static cv::Mat cv_image;
+        static cv::Mat padded_image;
         latest_image.convertTo(cv_image, CV_8U);
         cv::GaussianBlur(cv_image, cv_image, cv::Size(5, 5), 0, 0);
-        output_port.prepare().copy(yarp::cv::fromCvMat<PixelMono>(cv_image));
+
+        cv::Mat frame_to_send = cv_image;
+        if (movenet_frame_size.area() > 0 && movenet_frame_size != cv_image.size()) {
+            if (cv_image.cols <= movenet_frame_size.width && cv_image.rows <= movenet_frame_size.height) {
+                padded_image = cv::Mat::zeros(movenet_frame_size, CV_8U);
+                cv_image.copyTo(padded_image(cv::Rect(0, 0, cv_image.cols, cv_image.rows)));
+                frame_to_send = padded_image;
+            } else {
+                cv::resize(cv_image, padded_image, movenet_frame_size, 0, 0, cv::INTER_AREA);
+                frame_to_send = padded_image;
+            }
+        }
+
+        output_port.prepare().copy(yarp::cv::fromCvMat<PixelMono>(frame_to_send));
         output_port.write();
 
         const double req_wall_ts = yarp::os::Time::now();           // Timestamp when request was sent (for latency measurement)
@@ -115,6 +137,13 @@ public:
             previous_skeleton.conf = hpecore::extractConfidenceFromYARP<Bottle>(*mn_container);
             previous_skeleton.timestamp = latest_ts;
             previous_skeleton.delay = yarp::os::Time::now() - req_wall_ts;
+
+            if (sensor_size.area() > 0 && movenet_frame_size.area() > 0 && sensor_size != movenet_frame_size) {
+                for (auto &joint : previous_skeleton.pose) {
+                    joint.u = std::clamp(joint.u, 0.0f, static_cast<float>(sensor_size.width - 1));
+                    joint.v = std::clamp(joint.v, 0.0f, static_cast<float>(sensor_size.height - 1));
+                }
+            }
         }
 
         return mn_container != nullptr;
@@ -140,6 +169,7 @@ int main(int argc, char *argv[]){
         ss << std::left << std::setw(20) << "--moveenet_only" << std::setw(12) << "" << ": disable optical-flow/KF velocity update and use MoveNet detections only\n";
         ss << std::left << std::setw(20) << "--h" << std::setw(12) << "<int>" << ": height of image\n";
         ss << std::left << std::setw(20) << "--w" << std::setw(12) << "<int>" << ": width of image\n";
+        ss << std::left << std::setw(20) << "--dhp19/--dph19" << std::setw(12) << "" << ": use DHP19 sensor size (346x260); pad MoveNet transport to 352x260\n";
         ss << std::left << std::setw(20) << "--pu" << std::setw(12) << "<double>" << ": KF process uncertainty\n";
         ss << std::left << std::setw(20) << "--muD" << std::setw(12) << "<double>" << ": KF measurement uncertainty (position)\n";
         ss << std::left << std::setw(20) << "--muV" << std::setw(12) << "<double>" << ": KF measurement uncertainty (velocity)\n";
@@ -162,13 +192,20 @@ int main(int argc, char *argv[]){
     }
 
     // Read parameters from command line with default values
-    std::string datapath_file = rf.check("data_file", Value("/data/moveEnet_test/raw/S1_1_1/ch2dvs/data.log")).asString();
+    //std::string datapath_file = rf.check("data_file", Value("/data/moveEnet_test/raw/cam2_S11_Eating/ch0dvs/data.log")).asString();
+    std::string datapath_file = rf.check("data_file", Value("/data/DHP19_subset/raw/S11_1_1/ch0dvs/data.log")).asString();
     std::string output_file = rf.check("output_file", Value("/home/scarf_images/")).asString();
     double output_period = rf.check("output_period", Value(0.005)).asFloat64();                    // CSV write period
     double net_period = rf.check("net_period", Value(0.05)).asFloat64();                            // Range from 5ms to 100ms -> 200 Hz to 10 Hz   
     double flow_period = rf.check("flow_period", Value(0.005)).asFloat64();                         // Range from 5ms to 100ms -> 200 Hz to 10 Hz
     bool moveenet_only = rf.check("moveenet_only");                                                  // If true, skip optical-flow/KF velocity update
+    bool use_dhp19_size = rf.check("dhp19") || rf.check("dph19");                                    // Accept common typo as an alias
+    hpecore::dhp19_visualization_mode = use_dhp19_size;
     cv::Size res(rf.check("w", Value(640)).asInt32(), rf.check("h", Value(480)).asInt32());
+    if (use_dhp19_size) {
+        res = cv::Size(346, 260);
+    }
+    cv::Size movenet_res = use_dhp19_size ? cv::Size(352, 260) : res;
     double procU = rf.check("pu", Value(0.77)).asFloat64();                                         // Process uncertainty
     double measUD = rf.check("muD", Value(0.06)).asFloat64();                                       // Measurement uncertainty (position)
     double measUV = rf.check("muV", Value(0.97)).asFloat64();                                        // Measurement uncertainty (velocity)
@@ -258,7 +295,7 @@ int main(int argc, char *argv[]){
     }
 
     // MoveEnet checkpoint path
-    // std::string checkpoint_path = rf.check("checkpoint_path", Value("/usr/local/src/hpe-core/example/movenet/models/e97_valacc0.81209.pth")).asString();
+    //std::string checkpoint_path = rf.check("checkpoint_path", Value("/usr/local/src/hpe-core/example/movenet/models/e97_valacc0.81209.pth")).asString();
     std::string checkpoint_path = rf.check("checkpoint_path", Value("/usr/local/src/hpe-core/example/movenet/models/dhp19_allcams_e33_valacc0.87996.pth")).asString();
     // Detection frequency detF derived from moveEnet update period
     double detF = 1.0 / net_period;                     // Detection frequency in Hz
@@ -295,7 +332,13 @@ int main(int argc, char *argv[]){
     system("yarp name unregister /movenet/sklt:o >/dev/null 2>&1");
 
     // MoveEnet process launch
-    std::string command = "python3 /usr/local/src/hpe-core/example/movenet/movenet_online.py --checkpoint_path " + checkpoint_path + " &";
+    if (use_dhp19_size) {
+        yInfo() << "DHP19 mode: C++ canvas" << res.width << "x" << res.height
+                << ", MoveNet YARP transport" << movenet_res.width << "x" << movenet_res.height;
+    }
+    std::string command = "python3 /usr/local/src/hpe-core/example/movenet/movenet_online.py --checkpoint_path " + checkpoint_path +
+                          " --w " + std::to_string(movenet_res.width) +
+                          " --h " + std::to_string(movenet_res.height) + " &";
     system(command.c_str());
 
      // check if moveEnet process started
@@ -304,7 +347,7 @@ int main(int argc, char *argv[]){
     yInfo() << "MoveEnet started correctly";
 
     // Init detector ports
-    mn_handler.init(eros_out, movenet_in, detF);
+    mn_handler.init(eros_out, movenet_in, detF, res, movenet_res);
     yarp::os::Network::connect("/movenet/sklt:o", movenet_in, "fast_tcp");
     yarp::os::Network::connect(eros_out, "/movenet/img:i", "fast_tcp");
 
