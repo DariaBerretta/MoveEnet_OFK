@@ -45,7 +45,7 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["pointnet", "dgcnn", "pointtransformer"],
         help="EventPointPose backend to use",
     )
-    parser.add_argument("--checkpoint", default=None, help="Path to model.pth checkpoint")
+    parser.add_argument("--checkpoint", default="/home/model_mounts/eventpointpose/PointNet/models/model.pth", help="Path to model.pth checkpoint")
     parser.add_argument("--eventpointpose_repo", default="/home/EventPointPose", help="Official repo path")
     parser.add_argument("--frequency", type=float, default=30.0, help="Fallback inference/output frequency in Hz")
     parser.add_argument(
