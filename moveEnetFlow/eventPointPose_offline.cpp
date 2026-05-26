@@ -87,13 +87,72 @@ static std::string shellQuote(const std::string &s) {
 }
 
 static cv::Mat eventsToFrame(const std::vector<EventPoint> &events, const cv::Size &res) {
-    cv::Mat frame(res, CV_8UC1, cv::Scalar(0));
+    // Accumulate per-pixel event counts then normalize using a 3-sigma rule
+    cv::Mat counts(res, CV_64F, cv::Scalar(0));
     for (const auto &e : events) {
-        const int x = std::max(0, std::min(res.width - 1, static_cast<int>(std::lround(e.x))));
-        const int y = std::max(0, std::min(res.height - 1, static_cast<int>(std::lround(e.y))));
-        frame.at<unsigned char>(y, x) = (e.p > 0.0) ? 255 : 128;
+        int x = static_cast<int>(std::lround(e.x));
+        int y = static_cast<int>(std::lround(e.y));
+        x = std::max(0, std::min(res.width - 1, x));
+        y = std::max(0, std::min(res.height - 1, y));
+        counts.at<double>(y, x) += 1.0;
     }
-    return frame;
+
+    // If no events, return empty (black) frame
+    double sum = 0.0;
+    int nz = 0;
+    for (int r = 0; r < counts.rows; ++r) {
+        const double *row = counts.ptr<double>(r);
+        for (int c = 0; c < counts.cols; ++c) {
+            double v = row[c];
+            if (v > 0.0) {
+                sum += v;
+                ++nz;
+            }
+        }
+    }
+    if (nz == 0) {
+        return cv::Mat(res, CV_8UC1, cv::Scalar(0));
+    }
+
+    double mean = sum / nz;
+    double var_sum = 0.0;
+    for (int r = 0; r < counts.rows; ++r) {
+        const double *row = counts.ptr<double>(r);
+        for (int c = 0; c < counts.cols; ++c) {
+            double v = row[c];
+            if (v > 0.0) {
+                double d = v - mean;
+                var_sum += d * d;
+            }
+        }
+    }
+    double var = (nz > 1) ? (var_sum / (nz - 1)) : var_sum;
+    double sig = std::sqrt(var);
+    if (sig < (0.1 / 255.0)) {
+        sig = 0.1 / 255.0;
+    }
+
+    const double numSDevs = 3.0;
+    const double range_old = numSDevs * sig; // scaling factor
+    const double range_new = 255.0;
+
+    cv::Mat out(res, CV_8UC1, cv::Scalar(0));
+    for (int r = 0; r < counts.rows; ++r) {
+        const double *inrow = counts.ptr<double>(r);
+        unsigned char *outrow = out.ptr<unsigned char>(r);
+        for (int c = 0; c < counts.cols; ++c) {
+            double v = inrow[c];
+            if (v <= 0.0) {
+                outrow[c] = 0;
+            } else {
+                double f = (v * range_new) / range_old;
+                if (f > 255.0) f = 255.0;
+                if (f < 0.0) f = 0.0;
+                outrow[c] = static_cast<unsigned char>(std::floor(f));
+            }
+        }
+    }
+    return out;
 }
 
 } // namespace
@@ -224,9 +283,7 @@ public:
         }
     }
 
-    bool update(const std::vector<EventPoint> &latest_events,
-                double latest_ts,
-                hpecore::stampedPose &previous_skeleton)
+    bool update(const std::vector<EventPoint> &latest_events, double latest_ts, hpecore::stampedPose &previous_skeleton)
     {
         if (latest_events.empty()) {
             return false;
@@ -331,6 +388,7 @@ static bool readNextEventWindow(ev::offlineLoader<ev::AE> &eloader,
 
         rolling_events.push_back(e);
         ++appended;
+        // discarding the oldest events keeps the window size fixed and ensures that the most recent
         while (rolling_events.size() > raw_events_per_window) {
             rolling_events.pop_front();
         }
@@ -393,6 +451,8 @@ int main(int argc, char *argv[])
     const bool no_csv = rf.check("no_csv");
     std::string output_video = rf.check("output_video", Value("")).asString();
     const bool no_video = rf.check("no_video");
+    
+    // For debugging: limit the number of processed event windows to avoid long runs on large datasets. Set max_packets to -1 to disable.
     const int max_packets = rf.check("max_packets", Value(-1)).asInt32();
     yInfo() << "max_packets set to" << max_packets;
 
@@ -453,7 +513,7 @@ int main(int argc, char *argv[])
     }
 
     hpecore::stampedPose detected_pose;
-    hpecore::skeleton13 filtered_pose{};
+    hpecore::skeleton13 network_pose{};
     bool pose_initialised = false;
 
     double tnow = 0.0;
@@ -465,6 +525,7 @@ int main(int argc, char *argv[])
     while (readNextEventWindow(eloader, net_period, static_cast<std::size_t>(std::max(1, raw_events_per_window)), event_window, tnow)) {
         packet_count++;
 
+        // For debugging: stop after a certain number of packets to avoid long runs on large datasets. Set max_packets to -1 to disable.
         if (max_packets > 0 && packet_count > max_packets) {
             yInfo() << "Reached max_packets limit of" << max_packets << ", stopping early.";
             break;
@@ -476,7 +537,7 @@ int main(int argc, char *argv[])
 
         const bool was_detected = epp_handler.update(event_window, tnow, detected_pose);
         if (was_detected && hpecore::poseNonZero(detected_pose.pose)) {
-            filtered_pose = detected_pose.pose;
+            network_pose = detected_pose.pose;
             pose_initialised = true;
         }
 
@@ -485,11 +546,12 @@ int main(int argc, char *argv[])
             if (pose_initialised && csv_file.is_open()) {
                 std::ostringstream row;
                 row << std::fixed << std::setprecision(6) << tnow;
+                // detected_pose.timestamp is the skeleton timestamp (tic), while tnow is the event window timestamp (toc). Latency is toc-tic, i.e. how old the skeleton prediction is at the current event window time.
                 const double lat = (detected_pose.timestamp > 0.0) ? detected_pose.delay : 0.0;
                 row << "," << lat;
                 for (int j = 0; j < 13; ++j) {
                     const int hpe_idx = CSV_HPE_ORDER[j];
-                    row << "," << filtered_pose[hpe_idx].u << "," << filtered_pose[hpe_idx].v;
+                    row << "," << network_pose[hpe_idx].u << "," << network_pose[hpe_idx].v;
                 }
                 csv_buffer.push_back(row.str());
             }
@@ -497,8 +559,10 @@ int main(int argc, char *argv[])
 
         if ((is_visualize || (!output_video.empty() && !no_video)) && tnow >= next_vis_upd) {
             next_vis_upd += output_period;
+
             cv::Mat frame = eventsToFrame(event_window, res);
-            renderVisualizationFrame(vis_ctx, frame, pose_initialised, filtered_pose, detected_pose, tnow);
+
+            renderVisualizationFrameEPP(vis_ctx, frame, pose_initialised, network_pose, detected_pose, tnow);
             writeVisualizationFrame(vis_ctx, pose_initialised);
             if (showVisualizationFrame(vis_ctx)) {
                 yInfo() << "User requested stop";
