@@ -1,9 +1,42 @@
+/*
+    moveEnetOFK_offline.cpp
+
+    Purpose
+    - Offline replay pipeline that reads event data, generates EROS/SAE surfaces,
+        sends periodic frames to MoveNet via YARP, fuses detections with an
+        optical-flow + Kalman filter (OF+KF), logs CSV/video outputs, and optionally
+        visualizes results.
+
+    High-level flow
+    1. Parse command-line parameters (ResourceFinder).
+    2. Initialize telemetry, visualization, event loaders, surfaces, KF, and
+         MoveNet YARP connections.
+    3. Loop over event packets:
+         - update EROS/SAE surfaces,
+         - periodically send frames to MoveNet and read detections,
+         - periodically run OF + KF updates,
+         - log CSV/video and render visualization frames.
+    4. Clean up resources and terminate MoveNet.
+
+
+    BEFORE TO OPEN THE DOCKER REMBER TO:
+    * 1. xhost +local:docker
+    * 2. docker compose up
+    * New terminal:
+    * 3. docker exec -it moveEnet_flow sh
+    * 4. start yarp server: yarpserver &
+    * Attach Vs to running container
+    * 5. cd /home/moveEnetFlow/build
+    * 6. cmake ..
+    * 7. make
+*/
+
+#// --- Includes -----------------------------------------------------------------
 #include <yarp/os/all.h>
 #include <yarp/cv/Cv.h>                     // needed for yarp::cv::fromCvMat
 #include <yarp/sig/Image.h>                 // needed for BufferedPort<ImageOf<PixelMono>>
 #include <event-driven/core.h>
 #include <opencv2/opencv.hpp>
-//#include <opencv2/hdf.hpp>
 #include <event-driven/algs.h>
 #include <event-driven/vis.h>
 #include <hpe-core/utility.h>
@@ -20,23 +53,14 @@
 #include "utils/power_monitor.h"
 #include "utils/visualization_utils.h"
 
+// --- Usings -------------------------------------------------------------------
 using namespace yarp::os;
 using namespace yarp::sig;
 using std::string;
 using yarp::os::Value;
 
-/* BEFORE TO OPEN THE DOCKER REMBER TO:
- * 1. xhost +local:docker
- * 2. docker compose up
- * New terminal:
- * 3. docker exec -it moveEnet_flow sh
- * 4. start yarp server: yarpserver &
- * Attach Vs to running container
- * 5. cd /home/moveEnetFlow/build
- * 6. cmake ..
- * 7. make
- */
 
+// --- Types / Helpers ----------------------------------------------------------
 /**
  * Utility wrapper for communicating with MoveNet using YARP ports.
  *
@@ -150,6 +174,7 @@ public:
     }
 };
 
+// --- Main ---------------------------------------------------------------------
 int main(int argc, char *argv[]){
     
     // Prepare and configure the resource finder
@@ -166,10 +191,12 @@ int main(int argc, char *argv[]){
         ss << std::left << std::setw(20) << "--output_period" << std::setw(12) << "<double>" << ": CSV output period (s), default 0.005\n";
         ss << std::left << std::setw(20) << "--net_period" << std::setw(12) << "<double>" << ": model update period\n";
         ss << std::left << std::setw(20) << "--flow_period" << std::setw(12) << "<double>" << ": optical flow update period\n";
-        ss << std::left << std::setw(20) << "--moveenet_only" << std::setw(12) << "" << ": disable optical-flow/KF velocity update and use MoveNet detections only\n";
+        ss << std::left << std::setw(20) << "--moveenet_only" << std::setw(12) << ""
+            << ": disable optical-flow/KF velocity update and use MoveNet detections only\n";
         ss << std::left << std::setw(20) << "--h" << std::setw(12) << "<int>" << ": height of image\n";
         ss << std::left << std::setw(20) << "--w" << std::setw(12) << "<int>" << ": width of image\n";
-        ss << std::left << std::setw(20) << "--dhp19/--dph19" << std::setw(12) << "" << ": use DHP19 sensor size (346x260); pad MoveNet transport to 352x260\n";
+        ss << std::left << std::setw(20) << "--dhp19/--dph19" << std::setw(12) << ""
+            << ": use DHP19 sensor size (346x260); pad MoveNet transport to 352x260\n";
         ss << std::left << std::setw(20) << "--pu" << std::setw(12) << "<double>" << ": KF process uncertainty\n";
         ss << std::left << std::setw(20) << "--muD" << std::setw(12) << "<double>" << ": KF measurement uncertainty (position)\n";
         ss << std::left << std::setw(20) << "--muV" << std::setw(12) << "<double>" << ": KF measurement uncertainty (velocity)\n";
@@ -179,28 +206,32 @@ int main(int argc, char *argv[]){
         ss << std::left << std::setw(20) << "--output_csv" << std::setw(12) << "<string>" << ": path to output csv file\n";
         ss << std::left << std::setw(20) << "--include_velocities" << std::setw(12) << "" << ": when eval_format is set, also log velocities\n";
         ss << std::left << std::setw(20) << "--no_csv" << std::setw(12) << "" << ": skip CSV logging\n";
-        ss << std::left << std::setw(20) << "--output_video" << std::setw(12) << "<string>" << ": path to output video file (.mp4)\n";
+        ss << std::left << std::setw(20) << "--output_video" << std::setw(12) << "<string>"
+            << ": path to output video file (.mp4)\n";
         ss << std::left << std::setw(20) << "--no_video" << std::setw(12) << "" << ": disable video output\n";
-        ss << std::left << std::setw(20) << "--pwrjlr_file" << std::setw(12) << "<string>" << ": base path for PowerJoular output (no extension)\n";
-        ss << std::left << std::setw(20) << "--gpu_file" << std::setw(12) << "<string>" << ": output CSV file for NVIDIA GPU telemetry\n";
-        ss << std::left << std::setw(20) << "--gpu_period_ms" << std::setw(12) << "<int>" << ": nvidia-smi sampling period in ms (default 5)\n";
+        ss << std::left << std::setw(20) << "--pwrjlr_file" << std::setw(12) << "<string>"
+            << ": base path for PowerJoular output (no extension)\n";
+        ss << std::left << std::setw(20) << "--gpu_file" << std::setw(12) << "<string>"
+            << ": output CSV file for NVIDIA GPU telemetry\n";
+        ss << std::left << std::setw(20) << "--gpu_period_ms" << std::setw(12) << "<int>"
+            << ": nvidia-smi sampling period in ms (default 5)\n";
         
         ss << std::left << std::setw(20) << "--gpu_index" << std::setw(12) << "<int>" << ": NVIDIA GPU index to monitor (default 0)\n";
         yInfo() << ss.str();
-        // exit after printing help
         return 0;
     }
 
+    // --- Params / Config ----------------------------------------------------
     // Read parameters from command line with default values
-    //std::string datapath_file = rf.check("data_file", Value("/data/moveEnet_test/raw/cam2_S11_Eating/ch0dvs/data.log")).asString();
-    std::string datapath_file = rf.check("data_file", Value("/data/DHP19_subset/raw/S11_1_1/ch0dvs/data.log")).asString();
+    // std::string datapath_file = rf.check("data_file", Value("/data/moveEnet_test/raw/cam2_S11_Directions_1/ch0dvs/data.log")).asString();
+    std::string datapath_file = rf.check("data_file", Value("/data/DHP19_subset/raw/S11_1_1/ch3dvs/data.log")).asString();
     std::string output_file = rf.check("output_file", Value("/home/scarf_images/")).asString();
     double output_period = rf.check("output_period", Value(0.005)).asFloat64();                    // CSV write period
     double net_period = rf.check("net_period", Value(0.05)).asFloat64();                            // Range from 5ms to 100ms -> 200 Hz to 10 Hz   
     double flow_period = rf.check("flow_period", Value(0.005)).asFloat64();                         // Range from 5ms to 100ms -> 200 Hz to 10 Hz
     bool moveenet_only = rf.check("moveenet_only");                                                  // If true, skip optical-flow/KF velocity update
     bool use_dhp19_size = rf.check("dhp19") || rf.check("dph19");                                    // Accept common typo as an alias
-    hpecore::dhp19_visualization_mode = use_dhp19_size;
+    // hpecore::dhp19_visualization_mode = use_dhp19_size;
     cv::Size res(rf.check("w", Value(640)).asInt32(), rf.check("h", Value(480)).asInt32());
     if (use_dhp19_size) {
         res = cv::Size(346, 260);
@@ -217,12 +248,12 @@ int main(int argc, char *argv[]){
     bool no_csv = rf.check("no_csv");
     std::string output_video = rf.check("output_video", Value("")).asString();
     bool no_video = rf.check("no_video");
-    // std::string powerjoular_file = rf.check("pwrjlr_file", Value("/home/moveEnetFlow/pwr_cpu_file/single_test/20260223_testcpu_pwr")).asString();
     std::string powerjoular_file = rf.check("pwrjlr_file", Value("")).asString();
     std::string gpu_monitor_file = rf.check("gpu_file", Value("/home/moveEnetFlow/pwr_gpu_file/single_test/20260223_testgpu_pwr")).asString();
     int gpu_monitor_period_ms = rf.check("gpu_period_ms", Value(5)).asInt32();
     int gpu_monitor_index = rf.check("gpu_index", Value(0)).asInt32();
 
+    // --- Power / Monitoring -------------------------------------------------
     PowerMonitor power_monitor;
     PowerMonitorConfig power_cfg;
     power_cfg.powerjoular_file = powerjoular_file;
@@ -235,7 +266,8 @@ int main(int argc, char *argv[]){
     }
 
 
-    // ===== PREPARE CSV, VIDEO, AND VISUALIZATION RESOURCES =====
+    // --- CSV / Visualization ------------------------------------------------
+    // Prepare CSV, video, and visualization resources
     std::ofstream csv_file;                             // CSV file stream for logging results
     std::vector<std::string> csv_buffer;                // store rows for deferred write
     VisualizationContext vis_ctx;                      // Visualization and video writer resources
@@ -326,7 +358,6 @@ int main(int argc, char *argv[]){
 
     // Clear any lingering YARP port registrations
     system("pkill -f movenet_online.py >/dev/null 2>&1");
-    //system("killall python3 >/dev/null 2>&1");
     sleep(2);
     system("yarp name unregister /movenet/img:i >/dev/null 2>&1");
     system("yarp name unregister /movenet/sklt:o >/dev/null 2>&1");
@@ -468,7 +499,10 @@ int main(int argc, char *argv[]){
         // Visualization
         if ((is_visualize || (!output_video.empty() && !no_video)) && tnow >= next_vis_upd) {
             next_vis_upd += output_period;
-            renderVisualizationFrame(vis_ctx, eros.getSurface(), state.poseIsInitialised(), filtered_pose, detected_pose, tnow);
+            // When running in MoveNet-only mode, prefer showing the raw MoveNet
+            // prediction in the visualization instead of the KF/OF-corrected pose.
+            hpecore::skeleton13 viz_pose = moveenet_only ? detected_pose.pose : filtered_pose;
+            renderVisualizationFrame(vis_ctx, eros.getSurface(), state.poseIsInitialised(), viz_pose, detected_pose, tnow);
             writeVisualizationFrame(vis_ctx, snapshot_ready);
             if (showVisualizationFrame(vis_ctx)) {
                 yInfo() << "User requested stop";

@@ -200,7 +200,7 @@ int main(int argc, char *argv[]){
     }
 
     // Read parameters from command line with default values
-    std::string datapath_file = rf.check("data_file", Value("/data/moveEnet_test/mp4/cam2_S1_Directions.mp4")).asString();
+    std::string datapath_file = rf.check("data_file", Value("/data/moveEnet_test/mp4/cam2_S11_Directions_1.mp4")).asString();
     double output_period = rf.check("output_period", Value(0.005)).asFloat64();                     // CSV write period
     double net_period = rf.check("net_period", Value(0.05)).asFloat64();                            // Range from 5ms to 100ms -> 200 Hz to 10 Hz
     cv::Size res(rf.check("w", Value(640)).asInt32(), rf.check("h", Value(480)).asInt32());

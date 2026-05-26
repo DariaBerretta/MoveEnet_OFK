@@ -8,7 +8,7 @@
 
 namespace
 {
-constexpr const char *kWindowName = "moveEnetOFK_offline";
+constexpr const char *kWindowName = "Visualisation";
 
 cv::Size liveDisplaySize(const cv::Size &res)
 {
@@ -148,6 +148,41 @@ void renderVisualizationFrameOP(VisualizationContext &ctx,
         } catch (const cv::Exception &) {
         }
     }
+    if (hpecore::poseNonZero(detected_pose.pose)) {
+        try {
+            hpecore::stampedPose pose_raw = detected_pose;
+            hpecore::drawSkeleton(ctx.canvas, pose_raw, {0, 0, 255}, 2, 0.0);
+        } catch (const cv::Exception &) {
+        }
+    }
+}
+
+void pero(VisualizationContext &ctx,
+                                const cv::Mat &surface,
+                                bool pose_is_initialised,
+                                const hpecore::skeleton13 &filtered_pose,
+                                const hpecore::stampedPose &detected_pose,
+                                double tnow)
+{
+    cv::Mat vis;
+    surface.convertTo(vis, CV_8U);
+    if (vis.channels() == 1) {
+        cv::cvtColor(vis, ctx.canvas, cv::COLOR_GRAY2BGR);
+    } else {
+        ctx.canvas = vis.clone();
+    }
+
+    if (pose_is_initialised) {
+        try {
+            hpecore::stampedPose pose_filtered;
+            pose_filtered.pose = filtered_pose;
+            pose_filtered.timestamp = tnow;
+            pose_filtered.conf = detected_pose.conf;
+            hpecore::drawSkeleton(ctx.canvas, pose_filtered, {255, 0, 0}, 3, 0.0);
+        } catch (const cv::Exception &) {
+        }
+    }
+
     if (hpecore::poseNonZero(detected_pose.pose)) {
         try {
             hpecore::stampedPose pose_raw = detected_pose;

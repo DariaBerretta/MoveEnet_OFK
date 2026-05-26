@@ -34,6 +34,15 @@ void renderVisualizationFrameOP(VisualizationContext &ctx,
                               const hpecore::stampedPose &detected_pose,
                               double tnow);
 
+// Upstream EventPointPose-style renderer: assumes input already normalized
+// (no blur/normalize). Converts to BGR and overlays skeletons.
+void renderVisualizationFrameEPP(VisualizationContext &ctx,
+                                const cv::Mat &surface,
+                                bool pose_is_initialised,
+                                const hpecore::skeleton13 &filtered_pose,
+                                const hpecore::stampedPose &detected_pose,
+                                double tnow);
+
 void writeVisualizationFrame(VisualizationContext &ctx, bool snapshot_ready);
 
 bool showVisualizationFrame(VisualizationContext &ctx);

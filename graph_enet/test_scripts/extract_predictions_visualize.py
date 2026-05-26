@@ -30,7 +30,7 @@ from datetime import datetime
 # warnings.filterwarnings("ignore", message=".*weights_only=False.*", category=FutureWarning)
 
 # Import fixed metrics first
-from graph_enet.test_scripts.fixed_metrics import pck_error, mpjpe_error
+from graph_enet.utils.fixed_metrics import pck_error, mpjpe_error
 # Monkey patch the metrics module before importing the model
 import graph_enet.hpe_gnn.utils.metrics
 graph_enet.hpe_gnn.utils.metrics.pck_error = pck_error

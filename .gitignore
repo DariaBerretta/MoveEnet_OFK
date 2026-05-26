@@ -32,7 +32,9 @@ moveEnetFlow/pwr_gpu_file
 moveEnetFlow/experiments
 moveEnetFlow/nni_experiments
 moveEnetFlow/power_experiments
-EventPointPose
+moveEnetFlow/video_slides
+moveEnetFlow/other_version
 model_mounts
 epp_video.mp4
 video.mp4
+,pv
