@@ -157,7 +157,7 @@ void renderVisualizationFrameOP(VisualizationContext &ctx,
     }
 }
 
-void pero(VisualizationContext &ctx,
+void renderVisualizationFrameEPP(VisualizationContext &ctx,
                                 const cv::Mat &surface,
                                 bool pose_is_initialised,
                                 const hpecore::skeleton13 &filtered_pose,
