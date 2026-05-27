@@ -36,7 +36,7 @@ import numpy as np
 import re
 
 
-LOG_PATTERN = re.compile(r"(\d+) ([\d\.e\-]+) SKLT \((.*?)\) ([\d\.\-]+) ([\d\.\-]+)")
+LOG_PATTERN = re.compile(r"(\d+)\s+([\d\.e\-]+)\s+SKLT\s+\((.*?)\)\s+([\-\d\.]+)\s+([\-\d\.]+)")
 
 
 @dataclass
@@ -155,8 +155,13 @@ def main(argv: List[str] | None = None) -> None:
 
 	args = parser.parse_args(argv)
 
+	# Source tag name if DATASET is eh36m 
 	source_tag = f"ch0GT{int(args.source_hz)}Hzskeleton"
 	target_tag = f"ch0GT{int(args.target_hz)}Hzskeleton"
+
+	# Source tag name if DATASET is dhp19
+	# source_tag = f"ch3skeleton"
+	# target_tag = f"ch3GT{int(args.target_hz)}Hzskeleton"
 
 	folders = sorted(find_gt50_folders(args.dataset_root, source_tag))
 	if not folders:
