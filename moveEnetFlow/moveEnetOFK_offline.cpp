@@ -51,6 +51,17 @@
 #include <unistd.h>
 #include <cstdlib>
 #include "utils/power_monitor.h"
+
+static std::string shellQuote(const std::string &s)
+{
+    std::string out = "'";
+    for (char c : s) {
+        if (c == '\'') out += "'\\'\''";
+        else out += c;
+    }
+    out += "'";
+    return out;
+}
 #include "utils/visualization_utils.h"
 
 // --- Usings -------------------------------------------------------------------
@@ -217,6 +228,7 @@ int main(int argc, char *argv[]){
             << ": nvidia-smi sampling period in ms (default 5)\n";
         
         ss << std::left << std::setw(20) << "--gpu_index" << std::setw(12) << "<int>" << ": NVIDIA GPU index to monitor (default 0)\n";
+        ss << std::left << std::setw(20) << "--device" << std::setw(12) << "<string>" << ": device for MoveNet sidecar (e.g. cpu or cuda:0)\n";
         yInfo() << ss.str();
         return 0;
     }
@@ -252,6 +264,7 @@ int main(int argc, char *argv[]){
     std::string gpu_monitor_file = rf.check("gpu_file", Value("/home/moveEnetFlow/pwr_gpu_file/single_test/20260223_testgpu_pwr")).asString();
     int gpu_monitor_period_ms = rf.check("gpu_period_ms", Value(5)).asInt32();
     int gpu_monitor_index = rf.check("gpu_index", Value(0)).asInt32();
+    std::string device = rf.check("device", Value("cuda:0")).asString();
 
     // --- Power / Monitoring -------------------------------------------------
     PowerMonitor power_monitor;
@@ -367,10 +380,32 @@ int main(int argc, char *argv[]){
         yInfo() << "DHP19 mode: C++ canvas" << res.width << "x" << res.height
                 << ", MoveNet YARP transport" << movenet_res.width << "x" << movenet_res.height;
     }
-    std::string command = "python3 /usr/local/src/hpe-core/example/movenet/movenet_online.py --checkpoint_path " + checkpoint_path +
-                          " --w " + std::to_string(movenet_res.width) +
-                          " --h " + std::to_string(movenet_res.height) + " &";
-    system(command.c_str());
+    {
+        std::ostringstream cmd;
+        cmd << "python3 /usr/local/src/hpe-core/example/movenet/movenet_online.py --checkpoint_path " << shellQuote(checkpoint_path)
+            << " --w " << movenet_res.width << " --h " << movenet_res.height;
+        if (!device.empty()) {
+            std::string dev = device;
+            std::string dev_l = dev;
+            std::transform(dev_l.begin(), dev_l.end(), dev_l.begin(), ::tolower);
+            if (dev_l.rfind("cpu", 0) == 0) {
+                // CPU requested: do not pass --gpu (movenet will run on CPU)
+            } else {
+                // GPU requested: extract GPU index if present (cuda:N or N), default 0
+                int gpu_id = 0;
+                size_t colon = dev.find(':');
+                if (colon != std::string::npos) {
+                    std::string tail = dev.substr(colon + 1);
+                    try { gpu_id = std::stoi(tail); } catch (...) { gpu_id = 0; }
+                } else if (!dev.empty() && std::all_of(dev.begin(), dev.end(), ::isdigit)) {
+                    try { gpu_id = std::stoi(dev); } catch (...) { gpu_id = 0; }
+                }
+                cmd << " --gpu --GPU_ID " << gpu_id;
+            }
+        }
+        cmd << " &";
+        system(cmd.str().c_str());
+    }
 
      // check if moveEnet process started
     while (!yarp::os::NetworkBase::exists("/movenet/sklt:o"))
