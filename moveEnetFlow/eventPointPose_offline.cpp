@@ -43,37 +43,25 @@ struct EventPoint {
     double p{0.0};
 };
 
-// Canonical hpe-core::skeleton13 ordering expected by visualization
+// CSV order: match moveEnetOFK_offline (joint index order 0..12)
 static const std::array<int, 13> CSV_HPE_ORDER = {
-    hpecore::head,
-    hpecore::shoulderR,
-    hpecore::shoulderL,
-    hpecore::elbowR,
-    hpecore::elbowL,
-    hpecore::hipL,
-    hpecore::hipR,
-    hpecore::handR,
-    hpecore::handL,
-    hpecore::kneeR,
-    hpecore::kneeL,
-    hpecore::footR,
-    hpecore::footL
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12
 };
 
 static const std::array<const char*, 13> CSV_JOINT_NAMES = {
-    "nose",
-    "right_shoulder",
-    "left_shoulder",
-    "right_elbow",
-    "left_elbow",
-    "left_hip",
-    "right_hip",
-    "right_wrist",
-    "left_wrist",
-    "right_knee",
-    "left_knee",
-    "right_ankle",
-    "left_ankle"
+    "joint0",
+    "joint1",
+    "joint2",
+    "joint3",
+    "joint4",
+    "joint5",
+    "joint6",
+    "joint7",
+    "joint8",
+    "joint9",
+    "joint10",
+    "joint11",
+    "joint12"
 };
 
 static std::string shellQuote(const std::string &s) {
@@ -461,7 +449,27 @@ int main(int argc, char *argv[])
     power_cfg.powerjoular_file = rf.check("pwrjlr_file", Value("")).asString();
     power_cfg.gpu_file = rf.check("gpu_file", Value("/tmp/eventpointpose_gpu.csv")).asString();
     power_cfg.gpu_period_ms = rf.check("gpu_period_ms", Value(5)).asInt32();
-    power_cfg.gpu_index = rf.check("gpu_index", Value(0)).asInt32();
+    int gpu_monitor_index = rf.check("gpu_index", Value(0)).asInt32();
+
+    // If a device was specified (e.g. cuda:0), align the power monitor index to it
+    if (!device.empty()) {
+        std::string dev = device;
+        std::string dev_l = dev;
+        std::transform(dev_l.begin(), dev_l.end(), dev_l.begin(), ::tolower);
+        if (dev_l.rfind("cpu", 0) != 0) {
+            int parsed_gpu = 0;
+            size_t colon = dev.find(':');
+            if (colon != std::string::npos) {
+                std::string tail = dev.substr(colon + 1);
+                try { parsed_gpu = std::stoi(tail); } catch (...) { parsed_gpu = 0; }
+            } else if (!dev.empty() && std::all_of(dev.begin(), dev.end(), ::isdigit)) {
+                try { parsed_gpu = std::stoi(dev); } catch (...) { parsed_gpu = 0; }
+            }
+            gpu_monitor_index = parsed_gpu;
+        }
+    }
+
+    power_cfg.gpu_index = gpu_monitor_index;
     power_cfg.target_pid = ::getpid();
     if (!power_monitor.start(power_cfg)) {
         return -1;

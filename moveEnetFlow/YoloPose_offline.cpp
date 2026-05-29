@@ -18,6 +18,8 @@
 #include <unistd.h>
 #include <cstdlib>
 #include <tuple>
+#include <algorithm>
+#include <cctype>
 
 #include "utils/power_monitor.h"
 #include "utils/visualization_utils.h"
@@ -29,40 +31,25 @@ using yarp::os::Value;
 
 namespace {
 
-// CSV order requested by the user:
-//   Nose, LShoulder, RShoulder, LElbow, RElbow, LWrist, RWrist,
-//   LHip, RHip, LKnee, RKnee, LAnkle, RAnkle.
-// Values are indices inside hpe-core::skeleton13.
+// CSV order: match moveEnetOFK_offline (joint index order 0..12)
 static const std::array<int, 13> CSV_HPE_ORDER = {
-    hpecore::head,
-    hpecore::shoulderL,
-    hpecore::shoulderR,
-    hpecore::elbowL,
-    hpecore::elbowR,
-    hpecore::handL,
-    hpecore::handR,
-    hpecore::hipL,
-    hpecore::hipR,
-    hpecore::kneeL,
-    hpecore::kneeR,
-    hpecore::footL,
-    hpecore::footR
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12
 };
 
 static const std::array<const char*, 13> CSV_JOINT_NAMES = {
-    "nose",
-    "left_shoulder",
-    "right_shoulder",
-    "left_elbow",
-    "right_elbow",
-    "left_wrist",
-    "right_wrist",
-    "left_hip",
-    "right_hip",
-    "left_knee",
-    "right_knee",
-    "left_ankle",
-    "right_ankle"
+    "joint0",
+    "joint1",
+    "joint2",
+    "joint3",
+    "joint4",
+    "joint5",
+    "joint6",
+    "joint7",
+    "joint8",
+    "joint9",
+    "joint10",
+    "joint11",
+    "joint12"
 };
 
 static std::string shellQuote(const std::string &s) {
@@ -102,7 +89,8 @@ public:
     bool init(const std::string &model_path,
               const std::string &script_path,
               double rate,
-              const cv::Size &image_size)
+              const cv::Size &image_size,
+              const std::string &device = std::string())
     {
         sensor_size = image_size;
         period = (rate > 0.0) ? 1.0 / rate : 0.1;
@@ -131,8 +119,26 @@ public:
                 << " --w " << sensor_size.width
                 << " --h " << sensor_size.height
                 << " --img_port " << yolo_img_in
-                << " --sklt_port " << yolo_sklt_out
-                << " & echo $! > " << pid_file;
+                << " --sklt_port " << yolo_sklt_out;
+
+            if (!device.empty()) {
+                std::string dev = device;
+                dev.erase(dev.begin(), std::find_if(dev.begin(), dev.end(),
+                    [](unsigned char ch){ return !std::isspace(ch); }));
+                dev.erase(std::find_if(dev.rbegin(), dev.rend(),
+                    [](unsigned char ch){ return !std::isspace(ch); }).base(), dev.end());
+
+                if (dev == "cpu" || dev.rfind("cpu", 0) == 0) {
+                    cmd << " --device cpu";
+                } else if (dev.rfind("cuda:", 0) == 0) {
+                    std::string gpu_id = dev.substr(5);
+                    cmd << " --device " << shellQuote(gpu_id);
+                } else {
+                    cmd << " --device " << shellQuote(dev);
+                }
+            }
+
+            cmd << " & echo $! > " << pid_file;
 
             int r = std::system(cmd.str().c_str());
             if (r != 0) {
@@ -270,6 +276,7 @@ int main(int argc, char *argv[]){
         ss << std::left << std::setw(24) << "--gpu_file"        << std::setw(12) << "<string>" << ": output CSV for GPU telemetry\n";
         ss << std::left << std::setw(24) << "--gpu_period_ms"   << std::setw(12) << "<int>"    << ": nvidia-smi sampling period in ms\n";
         ss << std::left << std::setw(24) << "--gpu_index"       << std::setw(12) << "<int>"    << ": NVIDIA GPU index to monitor\n";
+        ss << std::left << std::setw(24) << "--device"          << std::setw(12) << "<string>" << ": 'cpu' or 'cuda:N' or GPU index\n";
         yInfo() << ss.str();
         // exit after printing help
         return 0;
@@ -281,7 +288,7 @@ int main(int argc, char *argv[]){
     double net_period = rf.check("net_period", Value(0.05)).asFloat64();                            // Range from 5ms to 100ms -> 200 Hz to 10 Hz
     cv::Size res(rf.check("w", Value(640)).asInt32(), rf.check("h", Value(480)).asInt32());
     bool is_visualize = rf.check("vis");                                                            // Visualization flag
-    std::string output_csv = rf.check("output_csv", Value("/home/moveEnetFlow/csv_file/YoloPose/test_YoloPose.csv")).asString();
+    std::string output_csv = rf.check("output_csv", Value("/tmp/YoloPose_output.csv")).asString();
     bool no_csv = rf.check("no_csv");
     std::string output_video = rf.check("output_video", Value("")).asString();
     bool no_video = rf.check("no_video");
@@ -291,6 +298,25 @@ int main(int argc, char *argv[]){
     std::string gpu_monitor_file = rf.check("gpu_file", Value("/home/moveEnetFlow/pwr_gpu_file/single_test/YoloPose_gpu_pwr")).asString();
     int gpu_monitor_period_ms = rf.check("gpu_period_ms", Value(5)).asInt32();
     int gpu_monitor_index = rf.check("gpu_index", Value(0)).asInt32();
+    std::string device = rf.check("device", Value("")).asString();
+
+    // Align GPU telemetry index with requested device when provided (e.g. --device cuda:0)
+    if (!device.empty()) {
+        std::string dev = device;
+        std::string dev_l = dev;
+        std::transform(dev_l.begin(), dev_l.end(), dev_l.begin(), ::tolower);
+        if (dev_l.rfind("cpu", 0) != 0) {
+            int parsed_gpu = 0;
+            size_t colon = dev.find(':');
+            if (colon != std::string::npos) {
+                std::string tail = dev.substr(colon + 1);
+                try { parsed_gpu = std::stoi(tail); } catch (...) { parsed_gpu = 0; }
+            } else if (!dev.empty() && std::all_of(dev.begin(), dev.end(), ::isdigit)) {
+                try { parsed_gpu = std::stoi(dev); } catch (...) { parsed_gpu = 0; }
+            }
+            gpu_monitor_index = parsed_gpu;
+        }
+    }
 
 
     // ===== POWER MONITORING =====
@@ -343,7 +369,7 @@ int main(int argc, char *argv[]){
     // Init detector ports
     double detF = 1.0 / net_period;                     // Detection frequency in Hz
     offlineDetector yolo_handler;
-    if (!yolo_handler.init(yolo_model_path, yolo_script_path, detF, res)) {
+    if (!yolo_handler.init(yolo_model_path, yolo_script_path, detF, res, device)) {
         yError() << "YoloPose init failed";
         return -1;
     }

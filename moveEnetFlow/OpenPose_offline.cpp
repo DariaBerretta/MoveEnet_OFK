@@ -14,6 +14,7 @@
 #include <vector>
 #include <string>
 #include <sstream>
+#include <algorithm>
 #include <unistd.h>
 #include <cstdlib>
 #include <openpose/headers.hpp>
@@ -41,7 +42,7 @@ private:
 
 public:
 
-    bool init(const std::string& model_folder, double rate)
+    bool init(const std::string& model_folder, double rate, const std::string& device = std::string())
     {
         if (rate <= 0.0) return false;
         period = 1.0 / rate;
@@ -57,6 +58,29 @@ public:
             //poseConfig.renderPose = -1;
             poseConfig.blendOriginalFrame = false;
             poseConfig.numberPeopleMax = 1;
+
+            // Device handling: allow CPU or select GPU index via `device` string.
+            if (!device.empty()) {
+                std::string dev = device;
+                std::string dev_l = dev;
+                std::transform(dev_l.begin(), dev_l.end(), dev_l.begin(), ::tolower);
+                if (dev_l.rfind("cpu", 0) == 0) {
+                    // Force CPU-only OpenPose
+                    poseConfig.gpuNumber = 0;
+                } else {
+                    // GPU requested: extract GPU index if present (cuda:N or N)
+                    int gpu_id = 0;
+                    size_t colon = dev.find(':');
+                    if (colon != std::string::npos) {
+                        std::string tail = dev.substr(colon + 1);
+                        try { gpu_id = std::stoi(tail); } catch (...) { gpu_id = 0; }
+                    } else if (!dev.empty() && std::all_of(dev.begin(), dev.end(), ::isdigit)) {
+                        try { gpu_id = std::stoi(dev); } catch (...) { gpu_id = 0; }
+                    }
+                    poseConfig.gpuNumber = 1;
+                    poseConfig.gpuNumberStart = gpu_id;
+                }
+            }
 
             opWrapper.configure(poseConfig);
             // opWrapper.disableMultiThreading();
@@ -192,6 +216,7 @@ int main(int argc, char *argv[]){
         ss << std::left << std::setw(24) << "--openpose_script" << std::setw(12) << "<string>" << ": path to OpenPose Python script\n";
         ss << std::left << std::setw(24) << "--pwrjlr_file"     << std::setw(12) << "<string>" << ": base path for PowerJoular output\n";
         ss << std::left << std::setw(24) << "--gpu_file"        << std::setw(12) << "<string>" << ": output CSV for GPU telemetry\n";
+        ss << std::left << std::setw(24) << "--device"          << std::setw(12) << "<string>" << ": device for OpenPose (cpu or cuda:N)\n";
         ss << std::left << std::setw(24) << "--gpu_period_ms"   << std::setw(12) << "<int>"    << ": nvidia-smi sampling period in ms\n";
         ss << std::left << std::setw(24) << "--gpu_index"       << std::setw(12) << "<int>"    << ": NVIDIA GPU index to monitor\n";
         yInfo() << ss.str();
@@ -214,6 +239,25 @@ int main(int argc, char *argv[]){
     std::string gpu_monitor_file = rf.check("gpu_file", Value("/home/moveEnetFlow/pwr_gpu_file/single_test/openpose_gpu_pwr")).asString();
     int gpu_monitor_period_ms = rf.check("gpu_period_ms", Value(5)).asInt32();
     int gpu_monitor_index = rf.check("gpu_index", Value(0)).asInt32();
+    std::string device = rf.check("device", Value("")).asString();
+
+    // If device indicates a CUDA GPU, prefer that GPU index for monitoring
+    if (!device.empty()) {
+        std::string dev = device;
+        std::string dev_l = dev;
+        std::transform(dev_l.begin(), dev_l.end(), dev_l.begin(), ::tolower);
+        if (dev_l.rfind("cpu", 0) != 0) {
+            int parsed_gpu = 0;
+            size_t colon = dev.find(':');
+            if (colon != std::string::npos) {
+                std::string tail = dev.substr(colon + 1);
+                try { parsed_gpu = std::stoi(tail); } catch (...) { parsed_gpu = 0; }
+            } else if (!dev.empty() && std::all_of(dev.begin(), dev.end(), ::isdigit)) {
+                try { parsed_gpu = std::stoi(dev); } catch (...) { parsed_gpu = 0; }
+            }
+            gpu_monitor_index = parsed_gpu;
+        }
+    }
 
 
     // ===== POWER MONITORING =====
@@ -266,7 +310,8 @@ int main(int argc, char *argv[]){
     // Init detector ports
     double detF = 1.0 / net_period;                     // Detection frequency in Hz
     offlineDetector op_handler;
-    if (!op_handler.init(op_model_path, detF)) {
+
+    if (!op_handler.init(op_model_path, detF, device)) {
         yError() << "OpenPose init failed";
         return -1;
     }
