@@ -237,7 +237,7 @@ int main(int argc, char *argv[]){
     // Read parameters from command line with default values
     // std::string datapath_file = rf.check("data_file", Value("/data/moveEnet_test/raw/cam2_S11_Directions_1/ch0dvs/data.log")).asString();
     std::string datapath_file = rf.check("data_file", Value("/data/DHP19_subset/raw/S11_1_1/ch3dvs/data.log")).asString();
-    std::string output_file = rf.check("output_file", Value("/home/scarf_images/")).asString();
+    std::string output_file = rf.check("output_file", Value("/tmp/output.csv")).asString();
     double output_period = rf.check("output_period", Value(0.005)).asFloat64();                    // CSV write period
     double net_period = rf.check("net_period", Value(0.05)).asFloat64();                            // Range from 5ms to 100ms -> 200 Hz to 10 Hz   
     double flow_period = rf.check("flow_period", Value(0.005)).asFloat64();                         // Range from 5ms to 100ms -> 200 Hz to 10 Hz
@@ -255,16 +255,35 @@ int main(int argc, char *argv[]){
     int roiSize = rf.check("roi", Value(20)).asInt32();                                             // ROI size for velocity estimation
     bool latency_compensation = rf.check("use_lc", Value(false)).asBool();                          // Latency compensation flag
     bool is_visualize = rf.check("vis");                                                            // Visualization flag
-    std::string output_csv = rf.check("output_csv", Value("/home/moveEnetFlow/csv_file/single_test/20260223_test1.csv")).asString();
+    std::string output_csv = rf.check("output_csv", Value("/tmp/output.csv")).asString();
     bool include_velocities = rf.check("include_velocities");
     bool no_csv = rf.check("no_csv");
     std::string output_video = rf.check("output_video", Value("")).asString();
     bool no_video = rf.check("no_video");
     std::string powerjoular_file = rf.check("pwrjlr_file", Value("")).asString();
-    std::string gpu_monitor_file = rf.check("gpu_file", Value("/home/moveEnetFlow/pwr_gpu_file/single_test/20260223_testgpu_pwr")).asString();
+    std::string gpu_monitor_file = rf.check("gpu_file", Value("/tmp/gpu_monitor.csv")).asString();
     int gpu_monitor_period_ms = rf.check("gpu_period_ms", Value(5)).asInt32();
     int gpu_monitor_index = rf.check("gpu_index", Value(0)).asInt32();
     std::string device = rf.check("device", Value("cuda:0")).asString();
+
+    // If the user specified a CUDA device (e.g. cuda:0), prefer that GPU index
+    // for the GPU power monitor so telemetry targets the selected device.
+    if (!device.empty()) {
+        std::string dev = device;
+        std::string dev_l = dev;
+        std::transform(dev_l.begin(), dev_l.end(), dev_l.begin(), ::tolower);
+        if (dev_l.rfind("cpu", 0) != 0) {
+            int parsed_gpu = 0;
+            size_t colon = dev.find(':');
+            if (colon != std::string::npos) {
+                std::string tail = dev.substr(colon + 1);
+                try { parsed_gpu = std::stoi(tail); } catch (...) { parsed_gpu = 0; }
+            } else if (!dev.empty() && std::all_of(dev.begin(), dev.end(), ::isdigit)) {
+                try { parsed_gpu = std::stoi(dev); } catch (...) { parsed_gpu = 0; }
+            }
+            gpu_monitor_index = parsed_gpu;
+        }
+    }
 
     // --- Power / Monitoring -------------------------------------------------
     PowerMonitor power_monitor;
@@ -345,10 +364,10 @@ int main(int argc, char *argv[]){
     // Detection frequency detF derived from moveEnet update period
     double detF = 1.0 / net_period;                     // Detection frequency in Hz
     double tnow = 0.0;                                  // Current simulation time
-    double next_net_upd = net_period;                   // event-time threshold for next MoveNet call
-    double next_flow_upd = flow_period;                 // event-time threshold for next OF+KF update
-    double next_csv_upd = output_period;               // event-time threshold for next CSV row
-    double next_vis_upd = output_period;               // event-time threshold for next visualization frame
+    double next_net_upd = 0.0;                         // event-time threshold for next MoveNet call
+    double next_flow_upd = 0.0;                 // event-time threshold for next OF+KF update
+    double next_csv_upd = 0.0;               // event-time threshold for next CSV row
+    double next_vis_upd = 0.0;               // event-time threshold for next visualization frame
 
     // Load event data from file 
     yInfo() << "Loading data ... ";
@@ -385,22 +404,19 @@ int main(int argc, char *argv[]){
         cmd << "python3 /usr/local/src/hpe-core/example/movenet/movenet_online.py --checkpoint_path " << shellQuote(checkpoint_path)
             << " --w " << movenet_res.width << " --h " << movenet_res.height;
         if (!device.empty()) {
+            // Pass canonical --device to the MoveNet sidecar which now understands it.
             std::string dev = device;
+            // Normalize 'cuda:N' -> 'cuda:N', 'N' -> 'cuda:N'
             std::string dev_l = dev;
             std::transform(dev_l.begin(), dev_l.end(), dev_l.begin(), ::tolower);
             if (dev_l.rfind("cpu", 0) == 0) {
-                // CPU requested: do not pass --gpu (movenet will run on CPU)
+                cmd << " --device cpu";
+            } else if (dev_l.rfind("cuda:", 0) == 0) {
+                cmd << " --device " << shellQuote(dev_l);
+            } else if (!dev_l.empty() && std::all_of(dev_l.begin(), dev_l.end(), ::isdigit)) {
+                cmd << " --device cuda:" << dev_l;
             } else {
-                // GPU requested: extract GPU index if present (cuda:N or N), default 0
-                int gpu_id = 0;
-                size_t colon = dev.find(':');
-                if (colon != std::string::npos) {
-                    std::string tail = dev.substr(colon + 1);
-                    try { gpu_id = std::stoi(tail); } catch (...) { gpu_id = 0; }
-                } else if (!dev.empty() && std::all_of(dev.begin(), dev.end(), ::isdigit)) {
-                    try { gpu_id = std::stoi(dev); } catch (...) { gpu_id = 0; }
-                }
-                cmd << " --gpu --GPU_ID " << gpu_id;
+                cmd << " --device " << shellQuote(dev_l);
             }
         }
         cmd << " &";
@@ -427,6 +443,11 @@ int main(int argc, char *argv[]){
     bool pending_detection = false;             // true when a new MoveNet result is waiting to correct the KF
     hpecore::skeleton13 jvs;                    // last known joint velocities (persistent across iterations)
     hpecore::skeleton13 filtered_pose;          // last known filtered pose (persistent across iterations)
+
+    // For true movenet-only mode
+    bool movenet_pose_available = false;
+    hpecore::skeleton13 movenet_only_pose;
+    double movenet_only_latency = 0.0;
 
     while (true) {
         
@@ -465,17 +486,33 @@ int main(int argc, char *argv[]){
         }
 
         // Send EROS frame to MoveEnet every net_period
+        // if (tnow >= next_net_upd) {
+        //     next_net_upd += net_period;
+        //     // Pass EROS surface directly; update() handles the CV_8U conversion internally
+        //     was_detected = mn_handler.update(eros.getSurface(), tnow, detected_pose);
+        //     if (was_detected && hpecore::poseNonZero(detected_pose.pose))
+        //         pending_detection = true;  // latch until the next flow update consumes it
+        // }
         if (tnow >= next_net_upd) {
-            next_net_upd += net_period;
-            // Pass EROS surface directly; update() handles the CV_8U conversion internally
+            next_net_upd = net_period + tnow;
+
             was_detected = mn_handler.update(eros.getSurface(), tnow, detected_pose);
-            if (was_detected && hpecore::poseNonZero(detected_pose.pose))
-                pending_detection = true;  // latch until the next flow update consumes it
+
+            if (was_detected && hpecore::poseNonZero(detected_pose.pose)) {
+                if (moveenet_only) {
+                    movenet_only_pose = detected_pose.pose;
+                    movenet_only_latency = detected_pose.delay;
+                    movenet_pose_available = true;
+                } else {
+                    pending_detection = true;
+                }
+            }
         }
 
+
         // Optical flow update every flow_period
-        if (tnow >= next_flow_upd) {
-            next_flow_upd += flow_period;
+        if (!moveenet_only && tnow >= next_flow_upd) {
+            next_flow_upd = flow_period + tnow;
             did_flow_update = true;
             // Kalman and velocity logic here
 
@@ -485,19 +522,18 @@ int main(int argc, char *argv[]){
                     state.updateFromPosition(detected_pose.pose, detected_pose.timestamp);
                 else
                     state.set(detected_pose.pose, tnow);
+                
                 pending_detection = false;  // consumed
             }
             
             if (state.poseIsInitialised())
             {
-                if (!moveenet_only) {
-                    // Estimate velocities from SAE surface using current filtered pose
-                    jvs = velocity_estimator.multi_area_velocity(sae_handler.getSurface(), tnow, state.query(), roiSize);
+                // Estimate velocities from SAE surface using current filtered pose
+                jvs = velocity_estimator.multi_area_velocity(sae_handler.getSurface(), tnow, state.query(), roiSize);
 
-                    // Update Kalman filter with velocity (prediction step with optical flow)
-                    state.setVelocity(jvs);
-                    state.updateFromVelocity(jvs, tnow);
-                }
+                // Update Kalman filter with velocity (prediction step with optical flow)
+                state.setVelocity(jvs);
+                state.updateFromVelocity(jvs, tnow);
 
                 // Query current pose. In MoveNet-only mode this is detection-corrected KF state without OF update.
                 filtered_pose = state.query();
@@ -513,32 +549,61 @@ int main(int argc, char *argv[]){
         // CSV logging at output_period rate, independent of flow/MoveNet updates
         // Advance timer unconditionally so it doesn't stall before pose is initialised
         if (tnow >= next_csv_upd) {
-            next_csv_upd += output_period;
-            if (state.poseIsInitialised() && csv_file.is_open()) {
+            next_csv_upd = output_period + tnow;
+
+            const bool ready =
+                moveenet_only ? movenet_pose_available : state.poseIsInitialised();
+
+            if (ready && csv_file.is_open()) {
+                const hpecore::skeleton13 &pose_to_write =
+                    moveenet_only ? movenet_only_pose : filtered_pose;
+
+                const double lat =
+                    moveenet_only ? movenet_only_latency :
+                    ((detected_pose.timestamp > 0) ? detected_pose.delay : 0.0);
+
                 std::ostringstream row;
                 row << std::fixed << std::setprecision(6) << tnow;
-                double lat = (detected_pose.timestamp > 0) ? detected_pose.delay : 0.0;
                 row << "," << lat;
+
                 for (int j = 0; j < 13; j++) {
-                    row << "," << filtered_pose[j].u << "," << filtered_pose[j].v;
+                    row << "," << pose_to_write[j].u << "," << pose_to_write[j].v;
                 }
+
                 if (include_velocities) {
                     for (int j = 0; j < 13; j++) {
-                        row << "," << jvs[j].u << "," << jvs[j].v;
+                        if (moveenet_only)
+                            row << ",0,0";
+                        else
+                            row << "," << jvs[j].u << "," << jvs[j].v;
                     }
                 }
+
                 csv_buffer.push_back(row.str());
             }
         }
 
         // Visualization
         if ((is_visualize || (!output_video.empty() && !no_video)) && tnow >= next_vis_upd) {
-            next_vis_upd += output_period;
+            next_vis_upd = output_period + tnow;
             // When running in MoveNet-only mode, prefer showing the raw MoveNet
             // prediction in the visualization instead of the KF/OF-corrected pose.
-            hpecore::skeleton13 viz_pose = moveenet_only ? detected_pose.pose : filtered_pose;
-            renderVisualizationFrame(vis_ctx, eros.getSurface(), state.poseIsInitialised(), viz_pose, detected_pose, tnow);
-            writeVisualizationFrame(vis_ctx, snapshot_ready);
+            hpecore::skeleton13 viz_pose = moveenet_only ? movenet_only_pose : filtered_pose;
+
+            renderVisualizationFrame(
+                vis_ctx,
+                eros.getSurface(),
+                moveenet_only ? movenet_pose_available : state.poseIsInitialised(),
+                viz_pose,
+                detected_pose,
+                tnow
+            );
+
+            writeVisualizationFrame(
+                vis_ctx,
+                moveenet_only ? movenet_pose_available : snapshot_ready
+            );
+            
             if (showVisualizationFrame(vis_ctx)) {
                 yInfo() << "User requested stop";
                 break;
