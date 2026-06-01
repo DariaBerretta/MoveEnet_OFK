@@ -1,172 +1,336 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Experiment directory structure
-EXP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"           # Current experiment directory --> {BASH_SOURCE[0]} is the path to the script itself.
-RAW_DIR="$EXP_DIR/results/raw"                                    # Output directory for raw CSV results
-LOG_DIR="$EXP_DIR/results/logs"                                   # Output directory for execution logs
+# Experiment A: accuracy vs network_period, for eH36M or DHP19.
+# Runs both MoveEnet+OFK and MoveEnet-only for each:
+#   dataset sequence x network_period x flow_period
 
-# Network periods (MoveEnet) to test (in seconds) - corresponds to detection rates: 100Hz, 50Hz, 20Hz, 10Hz, 5Hz, 2Hz
-PERIODS=("0.01" "0.02" "0.05" "0.1" "0.2" "0.5")
+EXP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Core executable and data paths
-BINARY="/home/moveEnetFlow/build/moveEnetOFK_offline"              # MoveEnet + Optical Flow Kalman binary
-DATA_ROOT="/data/moveEnet_test/raw/"                               # Root directory containing event-based datasets
-DATA_FILE=""                                                       # Optional single DVS file override (empty = use all in DATA_ROOT)
-CHECKPOINT_PATH="/usr/local/src/hpe-core/example/movenet/models/e97_valacc0.81209.pth"  # Pre-trained MoveNet model weights
+# -----------------------------------------------------------------------------
+# Defaults that can be overridden from the command line
+# -----------------------------------------------------------------------------
+DATASET="dhp19"                         # allowed: eh36m, dhp19
+BINARY="/home/moveEnetFlow/build/moveEnetOFK_offline"
 
-# Timing and processing parameters
-FLOW_PERIOD="0.001"                                                # Optical flow update period in seconds (1ms = 1kHz)
-OUTPUT_PERIOD="0.005"                                              # CSV output sampling period in seconds (5ms = 200Hz)
-IMG_W="640"                                                        # Event camera image width in pixels
-IMG_H="480"                                                        # Event camera image height in pixels
+DATA_FILE=""                            # optional single */chXdvs/data.log file
+DATA_GLOB=""                            # pattern used by find under DATA_ROOT
 
-# Kalman filter parameters for pose tracking
-# PROC_U="1e-1"                                                      # Process noise uncertainty (motion model uncertainty)
-PROC_U="0.77"                                                        
-# MEAS_UD="1e-4"                                                     # Position measurement uncertainty (detection accuracy)
-MEAS_UD="0.06"                                                    
-# MEAS_UV="0.0"                                                      # Velocity measurement uncertainty (set to 0 = no direct velocity measurements)
-MEAS_UV="0.97"                                                      
-ROI="20"                                                             # Region of interest size for velocity estimation (pixels)
+# eh36m
+# DATA_ROOT="/data/eh36m_testing_set_S9S11/events"
+# CHECKPOINT_PATH="/usr/local/src/hpe-core/example/movenet/models/e97_valacc0.81209.pth"
+# RAW_DIR="$EXP_DIR/eh36m_full_test/results/raw"                                    # Output directory for raw CSV results
+# LOG_DIR="$EXP_DIR/eh36m_full_test/results/logs"                                   # Output directory for execution logs
+# IMG_W="640
+# IMG_H="480
+
+# dhp19
+DATA_ROOT="/data/dhp19_testing_set_S13toS17"
+CHECKPOINT_PATH="/usr/local/src/hpe-core/example/movenet/models/dhp19_allcams_e33_valacc0.87996.pth"
+RAW_DIR="$EXP_DIR/dhp19_full_test/results/raw"                                    # Output directory for raw CSV results
+LOG_DIR="$EXP_DIR/dhp19_full_test/results/logs"                                   # Output directory for execution logs
+IMG_W="346"
+IMG_H="260"
+
+# Network periods in seconds: 100 Hz, 50 Hz, 20 Hz, 10 Hz, 5 Hz, 2 Hz
+NETWORK_PERIODS=("0.01" "0.02" "0.05" "0.1" "0.2" "0.5")
+
+# Optical-flow periods in seconds
+FLOW_PERIODS=("0.005" "0.01")
+
+OUTPUT_PERIOD="0.005"                   # CSV output sampling period, seconds
+DEVICE="cuda:0"
+
+# Kalman filter / OFK parameters
+PROC_U="0.77"
+MEAS_UD="0.06"
+MEAS_UV="0.97"
+ROI="20"
 
 # Feature flags
-USE_LC="false"                                                     # Enable/disable latency compensation
+USE_LC="false"
+INCLUDE_VELOCITIES="false"
+GPU_PERIOD_MS="5"
 
 usage() {
-  cat << USAGE
+  cat <<USAGE
 Usage: $(basename "$0") [options]
 
-Options:
-  --binary <path>            Path to moveEnetOFK_offline binary
-  --data_root <path>         Dataset root containing */ch0dvs/data.log (default: /data/moveEnet_test/raw/)
-  --data_file <path>         Optional single DVS file override (ch0dvs/data.log)
-  --checkpoint_path <path>   MoveNet checkpoint
-  --flow_period <float>      Optical-flow update period (default: 0.001)
-  --output_period <float>    CSV output period (default: 0.005)
-  --w <int>                  Image width (default: 640)
-  --h <int>                  Image height (default: 480)
-  --pu <float>               KF process uncertainty (default: 0.77)
-  --muD <float>              KF position measurement uncertainty (default: 0.06)
-  --muV <float>              KF velocity measurement uncertainty (default: 0.97)
-  --roi <int>                Velocity ROI size (default: 20)
-  --use_lc                   Enable latency compensation
-  --help                     Show this help
+Dataset presets:
+  --dataset <eh36m|dhp19>       Dataset preset. Default: eh36m
+
+Paths:
+  --binary <path>               Path to moveEnetOFK_offline binary
+  --data_root <path>            Dataset root containing event files
+  --data_file <path>            Optional single DVS file override, e.g. .../ch0dvs/data.log
+  --data_glob <pattern>         find -path pattern under data_root
+  --checkpoint_path <path>      MoveNet checkpoint
+  --raw_dir <path>              Output directory for raw CSV results
+  --log_dir <path>              Output directory for logs
+
+Timing:
+  --network_periods <list>      Comma-separated network periods. Default: 0.01,0.02,0.05,0.1,0.2,0.5
+  --periods <list>              Alias for --network_periods
+  --net_period <float>          Run a single network period
+  --flow_periods <list>         Comma-separated flow periods. Default: 0.001,0.005,0.01,0.02,0.05
+  --flow_period <float>         Run a single flow period
+  --output_period <float>       CSV output period. Default: 0.005
+
+Image / device:
+  --w <int>                     Image width. Dataset preset default if omitted
+  --h <int>                     Image height. Dataset preset default if omitted
+  --device <string>             MoveNet device, e.g. cpu, cuda:0, cuda:1. Default: cuda:0
+
+Kalman / OFK:
+  --pu <float>                  KF process uncertainty. Default: 0.77
+  --muD <float>                 KF position measurement uncertainty. Default: 0.06
+  --muV <float>                 KF velocity measurement uncertainty. Default: 0.97
+  --roi <int>                   Velocity ROI size. Default: 20
+  --use_lc                      Enable latency compensation
+  --include_velocities          Add velocity columns to CSV
+
+Monitoring:
+  --gpu_period_ms <int>         GPU monitor sampling period. Default: 5
+
+Other:
+  --help                        Show this help
 USAGE
 }
 
-while [[ $# -gt 0 ]]; do                                    # rocesses command-line arguments passed to the script
+split_csv_into_array() {
+  local csv="$1"
+  local -n out_array="$2"
+  IFS=',' read -r -a out_array <<< "$csv"
+}
+
+while [[ $# -gt 0 ]]; do
   case "$1" in
+    --dataset) DATASET="$2"; shift 2 ;;
     --binary) BINARY="$2"; shift 2 ;;
     --data_root) DATA_ROOT="$2"; shift 2 ;;
     --data_file) DATA_FILE="$2"; shift 2 ;;
+    --data_glob) DATA_GLOB="$2"; shift 2 ;;
     --checkpoint_path) CHECKPOINT_PATH="$2"; shift 2 ;;
-    --flow_period) FLOW_PERIOD="$2"; shift 2 ;;
+    --raw_dir) RAW_DIR="$2"; shift 2 ;;
+    --log_dir) LOG_DIR="$2"; shift 2 ;;
+
+    --network_periods|--periods) split_csv_into_array "$2" NETWORK_PERIODS; shift 2 ;;
+    --net_period) NETWORK_PERIODS=("$2"); shift 2 ;;
+    --flow_periods) split_csv_into_array "$2" FLOW_PERIODS; shift 2 ;;
+    --flow_period) FLOW_PERIODS=("$2"); shift 2 ;;
     --output_period) OUTPUT_PERIOD="$2"; shift 2 ;;
+
     --w) IMG_W="$2"; shift 2 ;;
     --h) IMG_H="$2"; shift 2 ;;
+    --device) DEVICE="$2"; shift 2 ;;
+
     --pu) PROC_U="$2"; shift 2 ;;
     --muD) MEAS_UD="$2"; shift 2 ;;
     --muV) MEAS_UV="$2"; shift 2 ;;
     --roi) ROI="$2"; shift 2 ;;
     --use_lc) USE_LC="true"; shift 1 ;;
+    --include_velocities) INCLUDE_VELOCITIES="true"; shift 1 ;;
+    --gpu_period_ms) GPU_PERIOD_MS="$2"; shift 2 ;;
+
     --help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage; exit 1 ;;
   esac
 done
 
+# -----------------------------------------------------------------------------
+# Dataset presets
+# -----------------------------------------------------------------------------
+DATASET_ARGS=()
+case "$DATASET" in
+  eh36m)
+    DATA_ROOT="${DATA_ROOT:-/data/eh36m_testing_set_S9S11/events}"
+    CHECKPOINT_PATH="${CHECKPOINT_PATH:-/usr/local/src/hpe-core/example/movenet/models/e97_valacc0.81209.pth}"
+    RAW_DIR="${RAW_DIR:-$EXP_DIR/eh36m_full_test/results/raw}"
+    LOG_DIR="${LOG_DIR:-$EXP_DIR/eh36m_full_test/results/logs}"
+    IMG_W="${IMG_W:-640}"
+    IMG_H="${IMG_H:-480}"
+    DATA_GLOB="${DATA_GLOB:-*/ch0dvs/data.log}"
+    DATASET_ARGS=()
+    ;;
+
+  dhp19)
+    DATA_ROOT="${DATA_ROOT:-/data/DHP19_subset/raw}"
+    CHECKPOINT_PATH="${CHECKPOINT_PATH:-/usr/local/src/hpe-core/example/movenet/models/dhp19_allcams_e33_valacc0.87996.pth}"
+    RAW_DIR="${RAW_DIR:-$EXP_DIR/dhp19_full_test/results/raw}"
+    LOG_DIR="${LOG_DIR:-$EXP_DIR/dhp19_full_test/results/logs}"
+    IMG_W="${IMG_W:-346}"
+    IMG_H="${IMG_H:-260}"
+    DATA_GLOB="${DATA_GLOB:-*/ch*dvs/data.log}"
+    DATASET_ARGS=(--dhp19)
+    ;;
+
+  *)
+    echo "Unknown dataset: $DATASET. Use eh36m or dhp19." >&2
+    exit 1
+    ;;
+esac
+
+# -----------------------------------------------------------------------------
+# Checks
+# -----------------------------------------------------------------------------
 if [[ ! -x "$BINARY" ]]; then
-  echo "Binary not found/executable: $BINARY" >&2
+  echo "Binary not found or not executable: $BINARY" >&2
   echo "Build first, e.g. in /home/moveEnetFlow/build: cmake .. && make -j" >&2
   exit 1
 fi
+
+if [[ ! -f "$CHECKPOINT_PATH" ]]; then
+  echo "Checkpoint not found: $CHECKPOINT_PATH" >&2
+  exit 1
+fi
+
 if [[ -n "$DATA_FILE" && ! -f "$DATA_FILE" ]]; then
   echo "Data file not found: $DATA_FILE" >&2
   exit 1
 fi
+
 if [[ -z "$DATA_FILE" && ! -d "$DATA_ROOT" ]]; then
   echo "Data root not found: $DATA_ROOT" >&2
   exit 1
 fi
 
+if [[ ${#NETWORK_PERIODS[@]} -eq 0 ]]; then
+  echo "No network periods specified." >&2
+  exit 1
+fi
+
+if [[ ${#FLOW_PERIODS[@]} -eq 0 ]]; then
+  echo "No flow periods specified." >&2
+  exit 1
+fi
+
 mkdir -p "$RAW_DIR" "$LOG_DIR"
 
-echo "Experiment A: Accuracy vs network_period"
-echo "Binary        : $BINARY"
-if [[ -n "$DATA_FILE" ]]; then
-  echo "Data mode     : single file"
-  echo "Data file     : $DATA_FILE"
-else
-  echo "Data mode     : dataset"
-  echo "Data root     : $DATA_ROOT"
-fi
-echo "Flow period   : $FLOW_PERIOD"
-echo "Output period : $OUTPUT_PERIOD"
-echo "Results dir   : $RAW_DIR"
-
+# -----------------------------------------------------------------------------
+# Input discovery
+# -----------------------------------------------------------------------------
 declare -a LOG_FILES=()
 if [[ -n "$DATA_FILE" ]]; then
   LOG_FILES+=("$DATA_FILE")
 else
-  mapfile -t LOG_FILES < <(find "$DATA_ROOT" -type f -path "*/ch0dvs/data.log" | sort)
+  mapfile -t LOG_FILES < <(find "$DATA_ROOT" -type f -path "$DATA_GLOB" | sort)
 fi
 
 if [[ ${#LOG_FILES[@]} -eq 0 ]]; then
-  echo "No input files found." >&2
+  echo "No input files found with pattern: $DATA_GLOB" >&2
   exit 1
 fi
 
+make_rel_stem() {
+  local log_file="$1"
+  local rel_path
+
+  if [[ -n "$DATA_FILE" ]]; then
+    rel_path="$(basename "$(dirname "$(dirname "$log_file")")")/$(basename "$(dirname "$log_file")")"
+  else
+    rel_path="$(realpath --relative-to="$DATA_ROOT" "$log_file")"
+    rel_path="${rel_path%/data.log}"
+  fi
+
+  rel_path="${rel_path//\//__}"
+  rel_path="${rel_path// /_}"
+  echo "$rel_path"
+}
+
+# -----------------------------------------------------------------------------
+# Summary
+# -----------------------------------------------------------------------------
+echo "Experiment A: accuracy vs network_period and flow_period"
+echo "Dataset        : $DATASET"
+echo "Binary         : $BINARY"
+echo "Checkpoint     : $CHECKPOINT_PATH"
+echo "Device         : $DEVICE"
+echo "Image size     : ${IMG_W}x${IMG_H}"
+if [[ -n "$DATA_FILE" ]]; then
+  echo "Data mode      : single file"
+  echo "Data file      : $DATA_FILE"
+else
+  echo "Data mode      : dataset"
+  echo "Data root      : $DATA_ROOT"
+  echo "Data glob      : $DATA_GLOB"
+fi
+echo "Network periods: ${NETWORK_PERIODS[*]}"
+echo "Flow periods   : ${FLOW_PERIODS[*]}"
+echo "Output period  : $OUTPUT_PERIOD"
+echo "Raw dir        : $RAW_DIR"
+echo "Log dir        : $LOG_DIR"
 echo "Sequences found: ${#LOG_FILES[@]}"
 
-for NP in "${PERIODS[@]}"; do
-  SAFE_NP="${NP//./p}"
-  NP_DIR="$RAW_DIR/np_${SAFE_NP}"
-  mkdir -p "$NP_DIR"
+# -----------------------------------------------------------------------------
+# Main experiment grid
+# -----------------------------------------------------------------------------
+for FP in "${FLOW_PERIODS[@]}"; do
+  SAFE_FP="${FP//./p}"
 
-  echo ""
-  echo "[network_period=${NP}s, detection_rate=$(awk "BEGIN{printf \"%.3f\", 1/$NP}") Hz]"
+  for NP in "${NETWORK_PERIODS[@]}"; do
+    SAFE_NP="${NP//./p}"
+    RUN_DIR="$RAW_DIR/fp_${SAFE_FP}/np_${SAFE_NP}"
+    mkdir -p "$RUN_DIR"
 
-  for LOG_FILE in "${LOG_FILES[@]}"; do
-    if [[ -n "$DATA_FILE" ]]; then
-      REL_STEM="$(basename "$(dirname "$(dirname "$LOG_FILE")")")"
-    else
-      REL_PATH="$(realpath --relative-to="$DATA_ROOT" "$LOG_FILE")"
-      REL_STEM="${REL_PATH%/ch0dvs/data.log}"
-      REL_STEM="${REL_STEM//\//__}"
-    fi
+    DET_RATE="$(awk "BEGIN{printf \"%.3f\", 1/$NP}")"
+    FLOW_RATE="$(awk "BEGIN{printf \"%.3f\", 1/$FP}")"
 
-    OUT_OFK="$NP_DIR/${REL_STEM}_moveenet_ofk_np_${SAFE_NP}.csv"
-    OUT_MN="$NP_DIR/${REL_STEM}_moveenet_np_${SAFE_NP}.csv"
+    echo ""
+    echo "[flow_period=${FP}s (${FLOW_RATE} Hz), network_period=${NP}s (${DET_RATE} Hz)]"
 
-    COMMON_ARGS=(
-      --data_file "$LOG_FILE"
-      --output_period "$OUTPUT_PERIOD"
-      --net_period "$NP"
-      --flow_period "$FLOW_PERIOD"
-      --w "$IMG_W"
-      --h "$IMG_H"
-      --pu "$PROC_U"
-      --muD "$MEAS_UD"
-      --muV "$MEAS_UV"
-      --roi "$ROI"
-      --checkpoint_path "$CHECKPOINT_PATH"
-      --no_video
-    )
-    if [[ "$USE_LC" == "true" ]]; then
-      COMMON_ARGS+=(--use_lc)
-    fi
+    for LOG_FILE in "${LOG_FILES[@]}"; do
+      REL_STEM="$(make_rel_stem "$LOG_FILE")"
 
-    echo "  -> [$REL_STEM] MoveEnet + OFK"
-    "$BINARY" "${COMMON_ARGS[@]}" --output_csv "$OUT_OFK" \
-      > "$LOG_DIR/${REL_STEM}_ofk_np_${SAFE_NP}.log" 2>&1
+      OUT_OFK="$RUN_DIR/${REL_STEM}_moveenet_ofk_np_${SAFE_NP}_fp_${SAFE_FP}.csv"
+      OUT_MN="$RUN_DIR/${REL_STEM}_moveenet_only_np_${SAFE_NP}_fp_${SAFE_FP}.csv"
+      LOG_OFK="$LOG_DIR/${REL_STEM}_moveenet_ofk_np_${SAFE_NP}_fp_${SAFE_FP}.log"
+      LOG_MN="$LOG_DIR/${REL_STEM}_moveenet_only_np_${SAFE_NP}_fp_${SAFE_FP}.log"
+      GPU_OFK="$LOG_DIR/${REL_STEM}_moveenet_ofk_np_${SAFE_NP}_fp_${SAFE_FP}_gpu.csv"
+      GPU_MN="$LOG_DIR/${REL_STEM}_moveenet_only_np_${SAFE_NP}_fp_${SAFE_FP}_gpu.csv"
 
-    echo "  -> [$REL_STEM] MoveEnet only"
-    "$BINARY" "${COMMON_ARGS[@]}" --moveenet_only --output_csv "$OUT_MN" \
-      > "$LOG_DIR/${REL_STEM}_moveenet_only_np_${SAFE_NP}.log" 2>&1
+      COMMON_ARGS=(
+        --data_file "$LOG_FILE"
+        --output_period "$OUTPUT_PERIOD"
+        --net_period "$NP"
+        --flow_period "$FP"
+        --w "$IMG_W"
+        --h "$IMG_H"
+        --pu "$PROC_U"
+        --muD "$MEAS_UD"
+        --muV "$MEAS_UV"
+        --roi "$ROI"
+        --checkpoint_path "$CHECKPOINT_PATH"
+        --device "$DEVICE"
+        --gpu_period_ms "$GPU_PERIOD_MS"
+        --no_video
+        "${DATASET_ARGS[@]}"
+      )
+
+      if [[ "$USE_LC" == "true" ]]; then
+        COMMON_ARGS+=(--use_lc true)
+      fi
+
+      if [[ "$INCLUDE_VELOCITIES" == "true" ]]; then
+        COMMON_ARGS+=(--include_velocities)
+      fi
+
+      echo "  -> [$REL_STEM] MoveEnet + OFK"
+      "$BINARY" "${COMMON_ARGS[@]}" \
+        --gpu_file "$GPU_OFK" \
+        --output_csv "$OUT_OFK" \
+        > "$LOG_OFK" 2>&1
+
+      echo "  -> [$REL_STEM] MoveEnet only"
+      "$BINARY" "${COMMON_ARGS[@]}" \
+        --moveenet_only \
+        --gpu_file "$GPU_MN" \
+        --output_csv "$OUT_MN" \
+        > "$LOG_MN" 2>&1
+    done
   done
-
 done
 
 echo ""
-echo "Experiment completed. CSV files are in: $RAW_DIR"
-echo "Next: open notebooks/ExperimentA_MPJPE_vs_network_period.ipynb"
+echo "Experiment completed."
+echo "CSV files: $RAW_DIR"
+echo "Logs     : $LOG_DIR"

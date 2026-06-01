@@ -44,7 +44,7 @@ RUN cd $SOURCE_FOLDER && \
 
 RUN cd $SOURCE_FOLDER && \
 git clone --depth 1  --branch $YARP_VERSION https://github.com/robotology/yarp.git &&\
-cd yarp && mkdir build && cd build && \ 
+cd yarp && mkdir build && cd build && \
 cmake -DCMAKE_BUILD_TYPE=$BUILD_TYPE \
         -DYARP_COMPILE_BINDINGS=ON \
         -DCREATE_PYTHON=ON \
