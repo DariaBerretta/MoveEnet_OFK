@@ -32,3 +32,4 @@ moveEnetFlow/other_version
 model_mounts/
 epp_video.mp4
 video.mp4
+docker/.env

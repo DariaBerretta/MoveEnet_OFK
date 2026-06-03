@@ -7,7 +7,7 @@ services:
     privileged: true                            # Enable privileged mode,allow hardware access. Required for GPU access
 
     volumes:
-      - /home/dberretta-iit.local/Documents/Repos/GraphEnet-v2/:/home           # Mount project directory to /home in container
+      - ${GRAPHENET_PATH}:/home           # Mount project directory to /home in container
       - /tmp/.X11-unix:/tmp/.X11-unix:rw        # Mount X11 socket for GUI applications
       - /home/dberretta-iit.local/data:/data    # Mount host data directory to /data in container
       - /dev:/dev                               # Mount /dev for hardware access (e.g., GPU)
