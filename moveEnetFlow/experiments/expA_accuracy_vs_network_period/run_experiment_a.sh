@@ -36,7 +36,7 @@ IMG_H="260"
 NETWORK_PERIODS=("0.01" "0.02" "0.05" "0.1" "0.2" "0.5")
 
 # Optical-flow periods in seconds
-FLOW_PERIODS=("0.005" "0.01")
+FLOW_PERIODS=("0.01")
 
 OUTPUT_PERIOD="0.005"                   # CSV output sampling period, seconds
 DEVICE="cuda:0"

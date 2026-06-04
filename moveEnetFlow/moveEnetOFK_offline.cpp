@@ -236,7 +236,7 @@ int main(int argc, char *argv[]){
     // --- Params / Config ----------------------------------------------------
     // Read parameters from command line with default values
     // std::string datapath_file = rf.check("data_file", Value("/data/moveEnet_test/raw/cam2_S11_Directions_1/ch0dvs/data.log")).asString();
-    std::string datapath_file = rf.check("data_file", Value("/data/DHP19_subset/raw/S11_1_1/ch3dvs/data.log")).asString();
+    std::string datapath_file = rf.check("data_file", Value("/data/dhp19_testing_set_S13toS17/S13_1_1/ch3dvs/data.log")).asString();
     std::string output_file = rf.check("output_file", Value("/tmp/output.csv")).asString();
     double output_period = rf.check("output_period", Value(0.005)).asFloat64();                    // CSV write period
     double net_period = rf.check("net_period", Value(0.05)).asFloat64();                            // Range from 5ms to 100ms -> 200 Hz to 10 Hz   
@@ -404,19 +404,30 @@ int main(int argc, char *argv[]){
         cmd << "python3 /usr/local/src/hpe-core/example/movenet/movenet_online.py --checkpoint_path " << shellQuote(checkpoint_path)
             << " --w " << movenet_res.width << " --h " << movenet_res.height;
         if (!device.empty()) {
-            // Pass canonical --device to the MoveNet sidecar which now understands it.
             std::string dev = device;
-            // Normalize 'cuda:N' -> 'cuda:N', 'N' -> 'cuda:N'
             std::string dev_l = dev;
             std::transform(dev_l.begin(), dev_l.end(), dev_l.begin(), ::tolower);
+
             if (dev_l.rfind("cpu", 0) == 0) {
-                cmd << " --device cpu";
-            } else if (dev_l.rfind("cuda:", 0) == 0) {
-                cmd << " --device " << shellQuote(dev_l);
-            } else if (!dev_l.empty() && std::all_of(dev_l.begin(), dev_l.end(), ::isdigit)) {
-                cmd << " --device cuda:" << dev_l;
+                // CPU mode: do not pass --gpu to movenet_online.py
             } else {
-                cmd << " --device " << shellQuote(dev_l);
+                int parsed_gpu = 0;
+
+                if (dev_l.rfind("cuda:", 0) == 0) {
+                    try {
+                        parsed_gpu = std::stoi(dev_l.substr(5));
+                    } catch (...) {
+                        parsed_gpu = 0;
+                    }
+                } else if (!dev_l.empty() && std::all_of(dev_l.begin(), dev_l.end(), ::isdigit)) {
+                    try {
+                        parsed_gpu = std::stoi(dev_l);
+                    } catch (...) {
+                        parsed_gpu = 0;
+                    }
+                }
+
+                cmd << " --gpu --GPU_ID " << parsed_gpu;
             }
         }
         cmd << " &";

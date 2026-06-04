@@ -423,7 +423,7 @@ int main(int argc, char *argv[])
         return 0;
     }
 
-    const std::string datapath_file = rf.check("data_file", Value("/data/DHP19_subset/raw/S11_1_1/ch3dvs/data.log")).asString();
+    const std::string datapath_file = rf.check("data_file", Value("/data/dhp19_testing_set_S13toS17/S13_1_1/ch3dvs/data.log")).asString();
     const std::string checkpoint_path = rf.check("checkpoint_path", Value("/home/model_mounts/eventpointpose/PointNet/models/model.pth")).asString();
     const std::string epp_script = rf.check("epp_script", Value("/home/model_mounts/eventpointpose/PointNet/models/eventPointPose_yarp_server.py")).asString();
     const std::string device = rf.check("device", Value("")).asString();
