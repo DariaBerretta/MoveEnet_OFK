@@ -11,6 +11,8 @@ struct VisualizationContext
     cv::Size display_size;
     cv::VideoWriter video_writer;
     bool visualize{false};
+
+    std::string window_name;
 };
 
 bool initialiseVisualization(VisualizationContext &ctx,
@@ -19,7 +21,8 @@ bool initialiseVisualization(VisualizationContext &ctx,
                              bool no_video,
                              std::string &output_video,
                              const std::string &datapath_file,
-                             double output_period);
+                             double output_period,
+                             const std::string &window_name = "");
 
 void renderVisualizationFrame(VisualizationContext &ctx,
                               const cv::Mat &eros_surface,

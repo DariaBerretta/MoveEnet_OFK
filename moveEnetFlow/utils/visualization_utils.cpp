@@ -8,7 +8,7 @@
 
 namespace
 {
-constexpr const char *kWindowName = "Visualisation";
+constexpr const char *kWindowName = "HPE Visualisation";
 
 cv::Size liveDisplaySize(const cv::Size &res)
 {
@@ -37,22 +37,29 @@ bool initialiseVisualization(VisualizationContext &ctx,
                              bool no_video,
                              std::string &output_video,
                              const std::string &datapath_file,
-                             double output_period)
+                             double output_period, const std::string &window_name)
 {
     ctx.visualize = is_visualize;
     ctx.display_size = liveDisplaySize(res);
+    if (!window_name.empty()) {
+        ctx.window_name = window_name;
+    } else {
+        ctx.window_name = kWindowName;
+    }
 
+    //create a default video path if the user did not specify one and video output is enabled
     if (output_video.empty() && !no_video) {
         output_video = buildDefaultVideoPath(datapath_file);
     }
 
+    // A canva is  allocated either if visualization is enabled or if video output is enabled. 
     if (is_visualize || (!output_video.empty() && !no_video)) {
         ctx.canvas = cv::Mat(res, CV_8UC3);
     }
 
     if (is_visualize) {
-        cv::namedWindow(kWindowName, cv::WINDOW_NORMAL);
-        cv::resizeWindow(kWindowName, ctx.display_size);
+        cv::namedWindow(ctx.window_name, cv::WINDOW_NORMAL);
+        cv::resizeWindow(ctx.window_name, ctx.display_size);
         cv::Mat initial_frame = ctx.canvas.empty() ? cv::Mat(res, CV_8UC3, cv::Scalar(0, 0, 0)) : ctx.canvas;
         cv::Mat display_frame;
         if (ctx.display_size.area() > 0 && ctx.display_size != initial_frame.size()) {
@@ -60,7 +67,7 @@ bool initialiseVisualization(VisualizationContext &ctx,
         } else {
             display_frame = initial_frame;
         }
-        cv::imshow(kWindowName, display_frame);
+        cv::imshow(ctx.window_name, display_frame);
         cv::waitKey(1);
     }
 
@@ -208,9 +215,9 @@ bool showVisualizationFrame(VisualizationContext &ctx)
     if (ctx.display_size.area() > 0 && ctx.display_size != ctx.canvas.size()) {
         cv::Mat display_frame;
         cv::resize(ctx.canvas, display_frame, ctx.display_size, 0, 0, cv::INTER_LINEAR);
-        cv::imshow(kWindowName, display_frame);
+        cv::imshow(ctx.window_name, display_frame);
     } else {
-        cv::imshow(kWindowName, ctx.canvas);
+        cv::imshow(ctx.window_name, ctx.canvas);
     }
     char key_pressed = cv::waitKey(1);
     return key_pressed == '\e' || key_pressed == 'q';
