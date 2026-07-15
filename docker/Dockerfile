@@ -10,14 +10,22 @@ ARG HPE_VERSION=main
 ENV DEBIAN_FRONTEND noninteractive
 RUN apt update 
 
+# RUN apt-get update && apt-get install -y --no-install-recommends \
+#     software-properties-common curl ca-certificates gnupg \
+#  && add-apt-repository ppa:deadsnakes/ppa -y \
+#  && apt-get update && apt-get install -y --no-install-recommends \
+#     python3.12 python3.12-venv python3.12-dev \
+#  && python3.12 -m ensurepip --upgrade \
+#  && python3.12 -m pip install --upgrade pip setuptools wheel \
+#  && python3.12 -m venv /opt/venv
+# ENV PATH="/opt/venv/bin:${PATH}"
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    software-properties-common curl ca-certificates gnupg \
- && add-apt-repository ppa:deadsnakes/ppa -y \
- && apt-get update && apt-get install -y --no-install-recommends \
-    python3.12 python3.12-venv python3.12-dev \
- && python3.12 -m ensurepip --upgrade \
- && python3.12 -m pip install --upgrade pip setuptools wheel \
- && python3.12 -m venv /opt/venv
+    python3 python3-dev python3-venv python3-pip \
+    curl ca-certificates gnupg \
+ && python3 -m pip install --upgrade pip setuptools wheel \
+ && python3 -m venv /opt/venv
+
 ENV PATH="/opt/venv/bin:${PATH}"
 
 RUN apt install -y build-essential libssl-dev software-properties-common \
@@ -28,7 +36,7 @@ RUN apt install -y build-essential libssl-dev software-properties-common \
     #qtbase5-dev qt5-default qtdeclarative5-dev qtmultimedia5-dev qml-module-qtquick2 qml-module-qtquick-window2 qml-module-qtmultimedia qml-module-qtquick-dialogs qml-module-qtquick-controls
     
 # RUN add-apt-repository ppa:deadsnakes/ppa
-RUN echo "deb [arch=amd64 trusted=yes] https://apt.prophesee.ai/dists/public/7l58osgr/ubuntu focal essentials" >> /etc/apt/sources.list;
+# RUN echo "deb [arch=amd64 trusted=yes] https://apt.prophesee.ai/dists/public/7l58osgr/ubuntu focal essentials" >> /etc/apt/sources.list;
 
 RUN apt update
 # RUN apt install -y python3.7 python3-pip python3.7-dev
@@ -69,6 +77,8 @@ RUN cd $SOURCE_FOLDER && \
     cmake .. && make install -j$(nproc)
 
 RUN python3 -m pip install -r $SOURCE_FOLDER/hpe-core/example/movenet/requirements.txt
+# RUN /opt/venv/bin/python -m pip install --upgrade pip setuptools wheel && \
+#    /opt/venv/bin/python -m pip install -r $SOURCE_FOLDER/hpe-core/example/movenet/requirements.txt
 ENV PYTHONPATH "${PYTHONPATH}:$SOURCE_FOLDER/hpe-core"
     
 RUN cd $SOURCE_FOLDER && \
@@ -94,9 +104,9 @@ RUN cd $SOURCE_FOLDER && \
     cmake -DCMAKE_BUILD_TYPE=Release \
           -DBUILD_PYTHON=OFF \
           -DUSE_CUDNN=ON \
-          -DDOWNLOAD_BODY_25_MODEL=ON \
-          -DDOWNLOAD_COCO_MODEL=ON \
-          -DDOWNLOAD_MPI_MODEL=ON \
+          -DDOWNLOAD_BODY_25_MODEL=OFF \
+          -DDOWNLOAD_COCO_MODEL=OFF \
+          -DDOWNLOAD_MPI_MODEL=OFF \
           -DDOWNLOAD_FACE_MODEL=OFF \
           -DDOWNLOAD_HAND_MODEL=OFF \
           .. && \
@@ -107,6 +117,16 @@ RUN apt autoremove && apt clean
 RUN rm -rf /tmp/* /var/lib/apt/lists/* /var/tmp/*
 
 WORKDIR $SOURCE_FOLDER
+
+COPY .env /tmp/.env
+
+RUN . /tmp/.env && \
+    groupadd -g ${MY_GID} ${USER} && \
+    useradd -m -s /bin/bash -u ${MY_UID} -g ${MY_GID} ${USER} && \
+    usermod -aG sudo ${USER} && \
+    echo "%sudo ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/sudo && \
+    chmod 0440 /etc/sudoers.d/sudo
+
 # COPY run_yarpserver.sh .
 # COPY run_atis_bridge.sh .
 # COPY run_movenet.sh .
