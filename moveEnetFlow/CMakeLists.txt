@@ -29,13 +29,12 @@ include_directories(
 #     hpe-core::hpe-core
 # )
 
-
-
 # Build async no-idle Kalman pipeline
 add_executable(moveEnetOFK_offline
     moveEnetOFK_offline.cpp
     utils/power_monitor.cpp
     utils/visualization_utils.cpp
+    utils/device_utils.cpp
 )
 target_link_libraries(moveEnetOFK_offline
     ${YARP_LIBRARIES}
@@ -49,6 +48,7 @@ add_executable(moveEnetOFK_offline_mpjpe
     moveEnetOFK_offline_mpjpe.cpp
     utils/power_monitor.cpp
     utils/visualization_utils.cpp
+    utils/device_utils.cpp
 )
 target_link_libraries(moveEnetOFK_offline_mpjpe
     ${YARP_LIBRARIES}
@@ -61,6 +61,7 @@ add_executable(OpenPose_offline
     OpenPose_offline.cpp
     utils/power_monitor.cpp
     utils/visualization_utils.cpp
+    utils/device_utils.cpp
 )
 
 target_link_libraries(OpenPose_offline
@@ -77,6 +78,7 @@ add_executable(YoloPose_offline
     YoloPose_offline.cpp
     utils/power_monitor.cpp
     utils/visualization_utils.cpp
+    utils/device_utils.cpp
 )
 
 target_link_libraries(YoloPose_offline
@@ -90,6 +92,7 @@ add_executable(eventPointPose_offline
     eventPointPose_offline.cpp
     utils/power_monitor.cpp
     utils/visualization_utils.cpp
+    utils/device_utils.cpp
 )
 
 target_link_libraries(eventPointPose_offline
@@ -112,21 +115,21 @@ target_link_libraries(eventPointPose_offline
 #    hpe-core::hpe-core
 #)
 
-add_executable(moveEnetOFK_offline_power
-    power_experiments/moveEnetOFK_offline_power.cpp
-    power_experiments/power_pipeline_monitor.cpp
-    utils/visualization_utils.cpp
-)
-target_include_directories(moveEnetOFK_offline_power PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}/power_experiments
-)
-target_link_libraries(moveEnetOFK_offline_power
-    ${YARP_LIBRARIES}
-    ${OpenCV_LIBS}
-    ev::event-driven
-    hpe-core::hpe-core
-)
+# add_executable(moveEnetOFK_offline_power
+#     power_experiments/moveEnetOFK_offline_power.cpp
+#     power_experiments/power_pipeline_monitor.cpp
+#     utils/visualization_utils.cpp
+# )
+# target_include_directories(moveEnetOFK_offline_power PRIVATE
+#     ${CMAKE_CURRENT_SOURCE_DIR}
+#     ${CMAKE_CURRENT_SOURCE_DIR}/power_experiments
+# )
+# target_link_libraries(moveEnetOFK_offline_power
+#     ${YARP_LIBRARIES}
+#     ${OpenCV_LIBS}
+#     ev::event-driven
+#     hpe-core::hpe-core
+# )
 
 # Build tDenseRNN offline pipeline for DHP19 raw event logs.
 # add_executable(tDense_offline
