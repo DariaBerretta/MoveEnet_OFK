@@ -178,6 +178,10 @@ public:
         period = (rate > 0.0) ? 1.0 / rate : 0.05;
         pid_file = "/tmp/eventpointpose_offline_python_" + std::to_string(::getpid()) + ".pid";
 
+        const std::string suffix = "_" + std::to_string(::getpid());
+        epp_events_in = "/eventPointPose/events:i" + suffix;
+        epp_sklt_out  = "/eventPointPose/sklt:o" + suffix;
+
         if (!yarp::os::Network::checkNetwork(2.0)) {
             yError() << "Could not connect to YARP. Start yarpserver first.";
             return false;
@@ -206,7 +210,9 @@ public:
                 << " --sensor_w " << sensor_size.width
                 << " --sensor_h " << sensor_size.height
                 << " --num_points " << num_points
-                << " --input_coord_base zero";
+                << " --coord_transform dhp19_last"
+                << " --enable_prefilter"
+                << " --timestamps_us";
             if (swap_lr) {
                 cmd << " --swap_lr";
             }
@@ -271,7 +277,9 @@ public:
         }
     }
 
-    bool update(const std::vector<EventPoint> &latest_events, double latest_ts, hpecore::stampedPose &previous_skeleton)
+    bool update(const std::vector<EventPoint> &latest_events,
+            double latest_ts,
+            hpecore::stampedPose &previous_skeleton)
     {
         if (latest_events.empty()) {
             return false;
@@ -282,33 +290,100 @@ public:
             waiting = false;
         }
 
+        bool sent = false;
+
         if ((!waiting && latest_ts - tic >= period) || (latest_ts - tic > 2.0)) {
             Bottle &b = output_port.prepare();
             b.clear();
+
             b.addFloat64(latest_ts);
             Bottle &payload = b.addList();
+
             for (const auto &e : latest_events) {
                 payload.addFloat64(e.x);
                 payload.addFloat64(e.y);
                 payload.addFloat64(e.t);
                 payload.addFloat64(e.p);
             }
+
             output_port.write();
+
             tic = latest_ts;
             waiting = true;
+            sent = true;
         }
 
-        Bottle *mn_container = input_port.read(false);
+        Bottle *mn_container = nullptr;
+
+        if (waiting) {
+            const double timeout_s = 5.0;
+            const double deadline = yarp::os::Time::now() + timeout_s;
+
+            while (yarp::os::Time::now() < deadline) {
+                mn_container = input_port.read(false);
+                if (mn_container) {
+                    break;
+                }
+                yarp::os::Time::delay(0.001);
+            }
+        }
+
         if (mn_container) {
-            previous_skeleton.pose = hpecore::extractSkeletonFromYARP<Bottle>(*mn_container);
-            previous_skeleton.conf = hpecore::extractConfidenceFromYARP<Bottle>(*mn_container);
+            previous_skeleton.pose =
+                hpecore::extractSkeletonFromYARP<Bottle>(*mn_container);
+            previous_skeleton.conf =
+                hpecore::extractConfidenceFromYARP<Bottle>(*mn_container);
             previous_skeleton.timestamp = tic;
             previous_skeleton.delay = latest_ts - tic;
             waiting = false;
+            return true;
         }
 
-        return mn_container != nullptr;
+        if (sent) {
+            yWarning() << "No EventPointPose skeleton received before timeout at t =" << latest_ts;
+        }
+
+        return false;
     }
+
+    // bool update(const std::vector<EventPoint> &latest_events, double latest_ts, hpecore::stampedPose &previous_skeleton)
+    // {
+    //     if (latest_events.empty()) {
+    //         return false;
+    //     }
+
+    //     if (latest_ts < tic) {
+    //         tic = latest_ts - 2.0;
+    //         waiting = false;
+    //     }
+
+    //     if ((!waiting && latest_ts - tic >= period) || (latest_ts - tic > 2.0)) {
+    //         Bottle &b = output_port.prepare();
+    //         b.clear();
+    //         b.addFloat64(latest_ts);
+    //         Bottle &payload = b.addList();
+    //         for (const auto &e : latest_events) {
+    //             payload.addFloat64(e.x);
+    //             payload.addFloat64(e.y);
+    //             payload.addFloat64(e.t);
+    //             payload.addFloat64(e.p);
+    //         }
+    //         output_port.write();
+    //         tic = latest_ts;
+    //         waiting = true;
+    //     }
+
+    //     Bottle *mn_container = input_port.read(false);
+    //     if (mn_container) {
+    //         previous_skeleton.pose = hpecore::extractSkeletonFromYARP<Bottle>(*mn_container);
+    //         previous_skeleton.conf = hpecore::extractConfidenceFromYARP<Bottle>(*mn_container);
+    //         previous_skeleton.timestamp = tic;
+    //         previous_skeleton.delay = latest_ts - tic;
+    //         waiting = false;
+    //     }
+
+    //     return mn_container != nullptr;
+    // }
 };
 
 // -----------------------------------------------------------------------------
@@ -335,10 +410,9 @@ static bool readNextEventWindow(ev::offlineLoader<ev::AE> &eloader,
     static bool first_call = true;
     static double next_ts = 0.0;
     static std::deque<EventPoint> rolling_events;
-    static std::uint64_t event_order = 0;
 
     if (raw_events_per_window == 0) {
-        raw_events_per_window = 7500;
+        raw_events_per_window = 2048;
     }
 
     if (first_call) {
@@ -365,10 +439,8 @@ static bool readNextEventWindow(ev::offlineLoader<ev::AE> &eloader,
         e.x = static_cast<double>(ae.x);
         e.y = static_cast<double>(ae.y);
 
-        // Prefer event order over packet timestamp because the installed loader
-        // exposes only packet time here. RasEPC only needs monotonic relative
-        // time before normalization to [0,1].
-        e.t = static_cast<double>(event_order++);
+        const double packet_timestamp_seconds = it.timestamp();
+        e.t = packet_timestamp_seconds * 1e6;
 
         // Keep polarity as 0/1. Python converts it to -1/+1 and accumulates
         // pacc exactly as in the EventPointPose rasterizer.
@@ -424,8 +496,8 @@ int main(int argc, char *argv[])
     }
 
     const std::string datapath_file = rf.check("data_file", Value("/data/dhp19_testing_set_S13toS17/S13_1_1/ch3dvs/data.log")).asString();
-    const std::string checkpoint_path = rf.check("checkpoint_path", Value("/home/model_mounts/eventpointpose/PointNet/models/model.pth")).asString();
-    const std::string epp_script = rf.check("epp_script", Value("/home/model_mounts/eventpointpose/PointNet/models/eventPointPose_yarp_server.py")).asString();
+    const std::string checkpoint_path = rf.check("checkpoint_path", Value("/workspace/model_mounts/eventpointpose/PointNet/models/model.pth")).asString();
+    const std::string epp_script = rf.check("epp_script", Value("/workspace/model_mounts/eventpointpose/PointNet/models/eventPointPose_yarp_server.py")).asString();
     const std::string device = rf.check("device", Value("")).asString();
     const int num_points = rf.check("num_points", Value(2048)).asInt32();
     const int raw_events_per_window = rf.check("raw_events_per_window", Value(7500)).asInt32();
@@ -562,6 +634,7 @@ int main(int argc, char *argv[])
                     row << "," << network_pose[hpe_idx].u << "," << network_pose[hpe_idx].v;
                 }
                 csv_buffer.push_back(row.str());
+                //printf("%s\n", row.str().c_str());
             }
         }
 
