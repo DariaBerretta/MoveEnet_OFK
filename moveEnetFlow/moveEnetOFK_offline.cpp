@@ -20,7 +20,7 @@
 
 
     BEFORE TO OPEN THE DOCKER REMBER TO:
-    * 1. xhost +local:docker
+    * 1.ls
     * 2. docker compose up
     * New terminal:
     * 3. docker exec -it moveEnet_flow sh
@@ -44,6 +44,7 @@
 #include <hpe-core/fusion.h>                // For hpecore::multiJointLatComp
 #include <hpe-core/representations.h>       // For hpecore::SAE
 #include <algorithm>
+#include <cctype>
 #include <fstream>
 #include <iomanip>
 #include <vector>
@@ -62,6 +63,7 @@ static std::string shellQuote(const std::string &s)
     out += "'";
     return out;
 }
+#include "utils/device_utils.h"
 #include "utils/visualization_utils.h"
 
 // --- Usings -------------------------------------------------------------------
@@ -82,12 +84,12 @@ using yarp::os::Value;
 class offlineDetector
 {
 private:
-    double period{0.001};  ///< Minimum interval between requests (sec) and last send timestamp
-    cv::Size sensor_size;  ///< Logical image size used by the C++ pipeline
-    cv::Size movenet_frame_size;  ///< Image size sent through YARP to MoveNet
+    double period{0.001};  // Minimum interval between requests (sec) and last send timestamp
+    cv::Size sensor_size;  // Logical image size used by the C++ pipeline
+    cv::Size movenet_frame_size;  // Image size sent through YARP to MoveNet
 
-    BufferedPort<ImageOf<PixelMono>> output_port;  ///< Port used to send images to MoveNet
-    BufferedPort<Bottle> input_port;               ///< Port used to receive skeleton responses
+    BufferedPort<ImageOf<PixelMono>> output_port;  // Port used to send images to MoveNet
+    BufferedPort<Bottle> input_port;               // Port used to receive skeleton responses
 
 public:
     /**
@@ -199,14 +201,14 @@ int main(int argc, char *argv[]){
         ss << "Options:\n";
         ss << std::left << std::setw(20) << "--data_file" << std::setw(12) << "<string>" << ": path to input dataset file\n";
         ss << std::left << std::setw(20) << "--output_file" << std::setw(12) << "<string>" << ": output path file\n";
-        ss << std::left << std::setw(20) << "--output_period" << std::setw(12) << "<double>" << ": CSV output period (s), default 0.005\n";
-        ss << std::left << std::setw(20) << "--net_period" << std::setw(12) << "<double>" << ": model update period\n";
-        ss << std::left << std::setw(20) << "--flow_period" << std::setw(12) << "<double>" << ": optical flow update period\n";
+        ss << std::left << std::setw(20) << "--output_period" << std::setw(12) << "<double>" << ": CSV writing output period (s), default 0.005\n";
+        ss << std::left << std::setw(20) << "--net_period" << std::setw(12) << "<double>" << ": Model detection period\n";
+        ss << std::left << std::setw(20) << "--flow_period" << std::setw(12) << "<double>" << ": Optical Flow update period\n";
         ss << std::left << std::setw(20) << "--moveenet_only" << std::setw(12) << ""
             << ": disable optical-flow/KF velocity update and use MoveNet detections only\n";
         ss << std::left << std::setw(20) << "--h" << std::setw(12) << "<int>" << ": height of image\n";
         ss << std::left << std::setw(20) << "--w" << std::setw(12) << "<int>" << ": width of image\n";
-        ss << std::left << std::setw(20) << "--dhp19/--dph19" << std::setw(12) << ""
+        ss << std::left << std::setw(20) << "--dhp19" << std::setw(12) << ""
             << ": use DHP19 sensor size (346x260); pad MoveNet transport to 352x260\n";
         ss << std::left << std::setw(20) << "--pu" << std::setw(12) << "<double>" << ": KF process uncertainty\n";
         ss << std::left << std::setw(20) << "--muD" << std::setw(12) << "<double>" << ": KF measurement uncertainty (position)\n";
@@ -214,7 +216,7 @@ int main(int argc, char *argv[]){
         ss << std::left << std::setw(20) << "--roi" << std::setw(12) << "<int>" << ": ROI size for velocity estimation\n";
         ss << std::left << std::setw(20) << "--use_lc" << std::setw(12) << "<bool>" << ": use latency compensation in KF\n";
         ss << std::left << std::setw(20) << "--vis" << std::setw(12) << "" << ": enable on-screen visualization\n";
-        ss << std::left << std::setw(20) << "--output_csv" << std::setw(12) << "<string>" << ": path to output csv file\n";
+        ss << std::left << std::setw(20) << "--output_csv_f" << std::setw(12) << "<string>" << ": path to output csv file\n";
         ss << std::left << std::setw(20) << "--include_velocities" << std::setw(12) << "" << ": when eval_format is set, also log velocities\n";
         ss << std::left << std::setw(20) << "--no_csv" << std::setw(12) << "" << ": skip CSV logging\n";
         ss << std::left << std::setw(20) << "--output_video" << std::setw(12) << "<string>"
@@ -242,53 +244,56 @@ int main(int argc, char *argv[]){
     double net_period = rf.check("net_period", Value(0.05)).asFloat64();                            // Range from 5ms to 100ms -> 200 Hz to 10 Hz   
     double flow_period = rf.check("flow_period", Value(0.005)).asFloat64();                         // Range from 5ms to 100ms -> 200 Hz to 10 Hz
     bool moveenet_only = rf.check("moveenet_only");                                                  // If true, skip optical-flow/KF velocity update
-    bool use_dhp19_size = rf.check("dhp19") || rf.check("dph19");                                    // Accept common typo as an alias
-    // hpecore::dhp19_visualization_mode = use_dhp19_size;
-    cv::Size res(rf.check("w", Value(640)).asInt32(), rf.check("h", Value(480)).asInt32());
+    bool use_dhp19_size = rf.check("dhp19");                                    // Accept common typo as an alias
+    
+    cv::Size res;          // Actual sensor/event-surface resolution
+    cv::Size movenet_res;  // Image resolution transported through YARP
+
     if (use_dhp19_size) {
         res = cv::Size(346, 260);
+
+        // YARP-compatible transport width.
+        // The six extra columns are zero padding on the right.
+        movenet_res = cv::Size(352, 260);
     }
-    cv::Size movenet_res = use_dhp19_size ? cv::Size(352, 260) : res;
+    else {
+        res = cv::Size(
+            rf.check("w", Value(640)).asInt32(),
+            rf.check("h", Value(480)).asInt32()
+        );
+
+        movenet_res = res;
+    }
+
     double procU = rf.check("pu", Value(0.77)).asFloat64();                                         // Process uncertainty
     double measUD = rf.check("muD", Value(0.06)).asFloat64();                                       // Measurement uncertainty (position)
-    double measUV = rf.check("muV", Value(0.97)).asFloat64();                                        // Measurement uncertainty (velocity)
+    double measUV = rf.check("muV", Value(0.97)).asFloat64();                                       // Measurement uncertainty (velocity)
     int roiSize = rf.check("roi", Value(20)).asInt32();                                             // ROI size for velocity estimation
-    bool latency_compensation = rf.check("use_lc", Value(false)).asBool();                          // Latency compensation flag
+
+    bool latency_compensation = rf.check("use_lc", Value(true)).asBool();                          // Latency compensation flag
     bool is_visualize = rf.check("vis");                                                            // Visualization flag
-    std::string output_csv = rf.check("output_csv", Value("/tmp/output.csv")).asString();
+    std::string output_csv_f = rf.check("output_csv_f", Value("/tmp/output.csv")).asString();
     bool include_velocities = rf.check("include_velocities");
     bool no_csv = rf.check("no_csv");
-    std::string output_video = rf.check("output_video", Value("")).asString();
+    std::string output_video = rf.check("output_video", Value("/tmp/output.mp4")).asString();
     bool no_video = rf.check("no_video");
-    std::string powerjoular_file = rf.check("pwrjlr_file", Value("")).asString();
+    
+    //std::string powerjoular_file = rf.check("pwrjlr_file", Value("/tmp/powerjoular.csv")).asString();
     std::string gpu_monitor_file = rf.check("gpu_file", Value("/tmp/gpu_monitor.csv")).asString();
     int gpu_monitor_period_ms = rf.check("gpu_period_ms", Value(5)).asInt32();
     int gpu_monitor_index = rf.check("gpu_index", Value(0)).asInt32();
     std::string device = rf.check("device", Value("cuda:0")).asString();
 
-    // If the user specified a CUDA device (e.g. cuda:0), prefer that GPU index
-    // for the GPU power monitor so telemetry targets the selected device.
-    if (!device.empty()) {
-        std::string dev = device;
-        std::string dev_l = dev;
-        std::transform(dev_l.begin(), dev_l.end(), dev_l.begin(), ::tolower);
-        if (dev_l.rfind("cpu", 0) != 0) {
-            int parsed_gpu = 0;
-            size_t colon = dev.find(':');
-            if (colon != std::string::npos) {
-                std::string tail = dev.substr(colon + 1);
-                try { parsed_gpu = std::stoi(tail); } catch (...) { parsed_gpu = 0; }
-            } else if (!dev.empty() && std::all_of(dev.begin(), dev.end(), ::isdigit)) {
-                try { parsed_gpu = std::stoi(dev); } catch (...) { parsed_gpu = 0; }
-            }
-            gpu_monitor_index = parsed_gpu;
-        }
+    DeviceConfig dev_cfg = parseDeviceConfig(device);
+    if (dev_cfg.use_gpu) {
+        gpu_monitor_index = dev_cfg.gpu_id;
     }
+   
 
     // --- Power / Monitoring -------------------------------------------------
     PowerMonitor power_monitor;
     PowerMonitorConfig power_cfg;
-    power_cfg.powerjoular_file = powerjoular_file;
+    // power_cfg.powerjoular_file = powerjoular_file;
     power_cfg.gpu_file = gpu_monitor_file;
     power_cfg.gpu_period_ms = gpu_monitor_period_ms;
     power_cfg.gpu_index = gpu_monitor_index;
@@ -306,12 +311,12 @@ int main(int argc, char *argv[]){
 
     // CSV writer setup
     if (!no_csv) {
-        csv_file.open(output_csv);
+        csv_file.open(output_csv_f);
         if (!csv_file.is_open()) {
-            yError() << "Could not open CSV file for writing:" << output_csv;
+            yError() << "Could not open CSV file for writing:" << output_csv_f;
             return -1;
         }
-        yInfo() << "CSV logging enabled ->" << output_csv;
+        yInfo() << "CSV logging enabled ->" << output_csv_f;
         csv_file << "timestamp,latency";
         for (int j = 0; j < 13; j++) {
             csv_file << ",joint" << j << "_x,joint" << j << "_y";
@@ -325,8 +330,8 @@ int main(int argc, char *argv[]){
         csv_file.flush();
     }
 
-    // Visualization and video setup
-    if (!initialiseVisualization(vis_ctx, res, is_visualize, no_video, output_video, datapath_file, output_period)) {
+    // Visualization and video setup, calls utils/visualization_utils.cpp
+    if (!initialiseVisualization(vis_ctx, res, is_visualize, no_video, output_video, datapath_file, output_period, "MoveEnetOFK Visualisation")) {
         return -1;
     }
 
@@ -359,15 +364,18 @@ int main(int argc, char *argv[]){
     }
 
     // MoveEnet checkpoint path
-    //std::string checkpoint_path = rf.check("checkpoint_path", Value("/usr/local/src/hpe-core/example/movenet/models/e97_valacc0.81209.pth")).asString();
-    std::string checkpoint_path = rf.check("checkpoint_path", Value("/usr/local/src/hpe-core/example/movenet/models/dhp19_allcams_e33_valacc0.87996.pth")).asString();
+    std::string checkpoint_path = rf.check("checkpoint_path", Value("/usr/local/src/hpe-core/example/movenet/models/e97_valacc0.81209.pth")).asString();
+    if(use_dhp19_size) {
+        checkpoint_path = rf.check("checkpoint_path", Value("/usr/local/src/hpe-core/example/movenet/models/dhp19_allcams_e33_valacc0.87996.pth")).asString();
+    }
+
     // Detection frequency detF derived from moveEnet update period
-    double detF = 1.0 / net_period;                     // Detection frequency in Hz
+    double detF = 1.0 / net_period;                     // Detection frequency in Hz of MoveNet
     double tnow = 0.0;                                  // Current simulation time
-    double next_net_upd = 0.0;                         // event-time threshold for next MoveNet call
-    double next_flow_upd = 0.0;                 // event-time threshold for next OF+KF update
-    double next_csv_upd = 0.0;               // event-time threshold for next CSV row
-    double next_vis_upd = 0.0;               // event-time threshold for next visualization frame
+    double next_net_upd = 0.0;                          // event-time threshold for next MoveNet call
+    double next_flow_upd = 0.0;                         // event-time threshold for next OF+KF update
+    double next_csv_upd = 0.0;                          // event-time threshold for next CSV row
+    double next_vis_upd = 0.0;                          // event-time threshold for next visualization frame
 
     // Load event data from file 
     yInfo() << "Loading data ... ";
@@ -394,45 +402,22 @@ int main(int argc, char *argv[]){
     system("yarp name unregister /movenet/img:i >/dev/null 2>&1");
     system("yarp name unregister /movenet/sklt:o >/dev/null 2>&1");
 
-    // MoveEnet process launch
-    if (use_dhp19_size) {
-        yInfo() << "DHP19 mode: C++ canvas" << res.width << "x" << res.height
-                << ", MoveNet YARP transport" << movenet_res.width << "x" << movenet_res.height;
+    // MoveEnet process launch, 
+    // if (use_dhp19_size) {
+    //     yInfo() << "DHP19 mode: C++ canvas" << res.width << "x" << res.height         
+    //             << ", MoveNet YARP transport" << res.width << "x" << res.height;
+    // }
+    
+    std::ostringstream cmd;
+    cmd << "python3 /usr/local/src/hpe-core/example/movenet/movenet_online.py --checkpoint_path " << shellQuote(checkpoint_path)
+        << " --w " << movenet_res.width << " --h " << movenet_res.height;
+
+    if (dev_cfg.use_gpu) {
+        cmd << " --gpu --GPU_ID " << dev_cfg.gpu_id;
     }
-    {
-        std::ostringstream cmd;
-        cmd << "python3 /usr/local/src/hpe-core/example/movenet/movenet_online.py --checkpoint_path " << shellQuote(checkpoint_path)
-            << " --w " << movenet_res.width << " --h " << movenet_res.height;
-        if (!device.empty()) {
-            std::string dev = device;
-            std::string dev_l = dev;
-            std::transform(dev_l.begin(), dev_l.end(), dev_l.begin(), ::tolower);
 
-            if (dev_l.rfind("cpu", 0) == 0) {
-                // CPU mode: do not pass --gpu to movenet_online.py
-            } else {
-                int parsed_gpu = 0;
-
-                if (dev_l.rfind("cuda:", 0) == 0) {
-                    try {
-                        parsed_gpu = std::stoi(dev_l.substr(5));
-                    } catch (...) {
-                        parsed_gpu = 0;
-                    }
-                } else if (!dev_l.empty() && std::all_of(dev_l.begin(), dev_l.end(), ::isdigit)) {
-                    try {
-                        parsed_gpu = std::stoi(dev_l);
-                    } catch (...) {
-                        parsed_gpu = 0;
-                    }
-                }
-
-                cmd << " --gpu --GPU_ID " << parsed_gpu;
-            }
-        }
-        cmd << " &";
-        system(cmd.str().c_str());
-    }
+    cmd << " &";
+    system(cmd.str().c_str());
 
      // check if moveEnet process started
     while (!yarp::os::NetworkBase::exists("/movenet/sklt:o"))
@@ -520,41 +505,87 @@ int main(int argc, char *argv[]){
             }
         }
 
+        // SECOND VERISON:
 
-        // Optical flow update every flow_period
         if (!moveenet_only && tnow >= next_flow_upd) {
             next_flow_upd = flow_period + tnow;
             did_flow_update = true;
-            // Kalman and velocity logic here
 
+            // 1. Use latest valid MoveNet pose, if available, to initialize/correct KF
             if (pending_detection) {
-                // Update Kalman filter with detected pose (correction step)
-                if (state.poseIsInitialised())
+                if (state.poseIsInitialised()) {
                     state.updateFromPosition(detected_pose.pose, detected_pose.timestamp);
-                else
-                    state.set(detected_pose.pose, tnow);
-                
-                pending_detection = false;  // consumed
-            }
-            
-            if (state.poseIsInitialised())
-            {
-                // Estimate velocities from SAE surface using current filtered pose
-                jvs = velocity_estimator.multi_area_velocity(sae_handler.getSurface(), tnow, state.query(), roiSize);
+                } else {
+                    state.set(detected_pose.pose, detected_pose.timestamp);
+                }
 
-                // Update Kalman filter with velocity (prediction step with optical flow)
-                state.setVelocity(jvs);
-                state.updateFromVelocity(jvs, tnow);
+                pending_detection = false;
+            }
 
-                // Query current pose. In MoveNet-only mode this is detection-corrected KF state without OF update.
-                filtered_pose = state.query();
+            // If no KF state exists yet, no fusion step can be performed
+            if (!state.poseIsInitialised()) {
+                continue;
             }
-            else
-            {
-                // If Kalman filter not yet initialized, use detected pose as-is
-                filtered_pose = detected_pose.pose;
-            }
+
+            // 2. Query corrected state
+            hpecore::skeleton13 corrected_pose = state.query();
+
+            // 3. Use corrected state as ROI/reference for optical-flow velocity estimation
+            jvs = velocity_estimator.multi_area_velocity(
+                sae_handler.getSurface(),
+                tnow,
+                corrected_pose,
+                roiSize
+            );
+
+            // 4. Feed estimated joint velocities back into KF
+            state.setVelocity(jvs);
+            state.updateFromVelocity(jvs, tnow);
+
+            // 5. Query KF state for output
+            filtered_pose = state.query();
         }
+
+
+        // // FIRST VERSION:
+        // // Optical flow update every flow_period
+        // if (!moveenet_only && tnow >= next_flow_upd) {
+        //     next_flow_upd = flow_period + tnow;
+        //     did_flow_update = true;
+            
+        //     // Kalman and velocity logic here
+        //     // 1. Use latest valid MoveNet pose, if available, to initialize/correct KF
+        //     if (pending_detection) {
+        //         // Update Kalman filter with detected pose (correction step)
+        //         if (state.poseIsInitialised())
+        //             state.updateFromPosition(detected_pose.pose, detected_pose.timestamp);
+        //         else
+        //             //state.set(detected_pose.pose, tnow);
+        //             state.set(detected_pose.pose, detected_pose.timestamp);
+                
+        //         pending_detection = false;  // consumed
+        //     }
+            
+
+        //     // 3. Use corrected state as ROI/reference for optical-flow velocity estimation
+        //     if (state.poseIsInitialised())
+        //     {
+        //         // Estimate velocities from SAE surface using current filtered pose
+        //         jvs = velocity_estimator.multi_area_velocity(sae_handler.getSurface(), tnow, state.query(), roiSize);
+
+        //         // Update Kalman filter with velocity (prediction step with optical flow)
+        //         state.setVelocity(jvs);
+        //         state.updateFromVelocity(jvs, tnow);
+
+        //         // Query current pose. In MoveNet-only mode this is detection-corrected KF state without OF update.
+        //         filtered_pose = state.query();
+        //     }
+        //     else
+        //     {
+        //         // If Kalman filter not yet initialized, use detected pose as-is
+        //         filtered_pose = detected_pose.pose;
+        //     }
+        // }
 
         const bool snapshot_ready = did_flow_update && state.poseIsInitialised();
         // CSV logging at output_period rate, independent of flow/MoveNet updates
@@ -566,8 +597,10 @@ int main(int argc, char *argv[]){
                 moveenet_only ? movenet_pose_available : state.poseIsInitialised();
 
             if (ready && csv_file.is_open()) {
+                // const hpecore::skeleton13 &pose_to_write =
+                //     moveenet_only ? movenet_only_pose : filtered_pose;
                 const hpecore::skeleton13 &pose_to_write =
-                    moveenet_only ? movenet_only_pose : filtered_pose;
+                    moveenet_only ? movenet_only_pose : state.query();
 
                 const double lat =
                     moveenet_only ? movenet_only_latency :
@@ -631,7 +664,7 @@ int main(int argc, char *argv[]){
             csv_file << line << "\n";
         }
         csv_file.close();
-        yInfo() << "CSV rows written:" << csv_buffer.size() << "->" << output_csv;
+        yInfo() << "CSV rows written:" << csv_buffer.size() << "->" << output_csv_f;
     }
     power_monitor.stop();
     mn_handler.close();
