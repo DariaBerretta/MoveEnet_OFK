@@ -225,18 +225,18 @@ int main(int argc, char *argv[]){
     }
 
     // Read parameters from command line with default values
-    std::string datapath_file = rf.check("data_file", Value("/data/moveEnet_test/mp4/cam2_S11_Directions_1.mp4")).asString();
+    std::string datapath_file = rf.check("data_file", Value("/data/eh36m_testing_set_S9S11/rgb/cam2_S9_Directions_1.mp4")).asString();
     double output_period = rf.check("output_period", Value(0.005)).asFloat64();                     // CSV write period
-    double net_period = rf.check("net_period", Value(0.05)).asFloat64();                            // Range from 5ms to 100ms -> 200 Hz to 10 Hz
+    double net_period = rf.check("net_period", Value(0.0)).asFloat64();                            // Range from 5ms to 100ms -> 200 Hz to 10 Hz
     cv::Size res(rf.check("w", Value(640)).asInt32(), rf.check("h", Value(480)).asInt32());
     bool is_visualize = rf.check("vis");                                                            // Visualization flag
-    std::string output_csv = rf.check("output_csv", Value("/home/moveEnetFlow/csv_file/openpose/test_openpose.csv")).asString();
+    std::string output_csv = rf.check("output_csv", Value("tmp/output.csv")).asString();
     bool no_csv = rf.check("no_csv");
-    std::string output_video = rf.check("output_video", Value("")).asString();
+    std::string output_video = rf.check("output_video", Value("tmp/output.mp4")).asString();
     bool no_video = rf.check("no_video");
     std::string op_model_path = rf.check("op_model_path", Value("/usr/local/src/openpose/models/")).asString();
     std::string powerjoular_file = rf.check("pwrjlr_file", Value("")).asString();
-    std::string gpu_monitor_file = rf.check("gpu_file", Value("/home/moveEnetFlow/pwr_gpu_file/single_test/openpose_gpu_pwr")).asString();
+    std::string gpu_monitor_file = rf.check("gpu_file", Value("tmp/gpu_monitor.csv")).asString();
     int gpu_monitor_period_ms = rf.check("gpu_period_ms", Value(5)).asInt32();
     int gpu_monitor_index = rf.check("gpu_index", Value(0)).asInt32();
     std::string device = rf.check("device", Value("")).asString();
