@@ -4,19 +4,19 @@ services:
     image: hpe
     build: .                                    # Use Dockerfile in current directory
     network_mode: host                          # Use host networking
-    privileged: true                            # Enable privileged mode,allow hardware access. Required for GPU access
+    # privileged: true                            # Enable privileged mode,allow hardware access. Required for GPU access
 
     volumes:
-      - ${GRAPHENET_PATH}:/home           # Mount project directory to /home in container
+      - ..:/workspace           # Mount project directory to /home in container
       - /tmp/.X11-unix:/tmp/.X11-unix:rw        # Mount X11 socket for GUI applications
       - /home/dberretta-iit.local/data:/data    # Mount host data directory to /data in container
-      - /dev:/dev                               # Mount /dev for hardware access (e.g., GPU)
-      - $HOME/.Xauthority:/root/.Xauthority:rw  # Mount X11 authentication
+      # - /dev:/dev                               # Mount /dev for hardware access (e.g., GPU)
+      - $HOME/.Xauthority:/home/${USER}/.Xauthority:rw  # Mount X11 authentication
 
     environment:
       - DISPLAY=${DISPLAY}                      # Pass host DISPLAY to container for GUI
       - QT_X11_NO_MITSHM=1                      # Fix for Qt apps with X11
-      - XAUTHORITY=/root/.Xauthority            # X11 authentication file
+      # - XAUTHORITY=/root/.Xauthority            # X11 authentication file
 
     deploy:  # Enable GPU access (requires Docker Compose v3.8+ and NVIDIA Container Toolkit)
       resources:
@@ -27,7 +27,5 @@ services:
               capabilities: [gpu]
 
     command: sleep infinity                     # Keep the container running
-
     
-
- 
+    user: "${MY_UID}:${MY_GID}"                # Run container with host user permissions
