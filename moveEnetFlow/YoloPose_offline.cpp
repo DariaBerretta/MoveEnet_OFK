@@ -1,9 +1,15 @@
 // YoloPose offline runner.
-// Output CSV bounded at 50Hz, .mp4 frame rate
+//
+// YOLO inference rate and output rate are independent:
+//   - --net_period controls how often a video frame is sent to YOLO.
+//   - --output_period controls how often the latest valid pose is written.
+//
+// Between two YOLO inferences, the latest valid pose is held using a
+// zero-order hold. The CSV format is intentionally unchanged.
 
 #include <yarp/os/all.h>
-#include <yarp/cv/Cv.h>                     // needed for yarp::cv::fromCvMat
-#include <yarp/sig/Image.h>                 // needed for BufferedPort<ImageOf<PixelMono>>
+#include <yarp/cv/Cv.h>
+#include <yarp/sig/Image.h>
 
 #include <opencv2/opencv.hpp>
 
@@ -20,6 +26,7 @@
 #include <tuple>
 #include <algorithm>
 #include <cctype>
+#include <cstddef>
 
 #include "utils/power_monitor.h"
 #include "utils/visualization_utils.h"
@@ -31,7 +38,7 @@ using yarp::os::Value;
 
 namespace {
 
-// CSV order: match moveEnetOFK_offline (joint index order 0..12)
+// CSV order: match moveEnetOFK_offline (joint index order 0..12).
 static const std::array<int, 13> CSV_HPE_ORDER = {
     0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12
 };
@@ -52,7 +59,8 @@ static const std::array<const char*, 13> CSV_JOINT_NAMES = {
     "joint12"
 };
 
-static std::string shellQuote(const std::string &s) {
+static std::string shellQuote(const std::string &s)
+{
     std::string out = "'";
     for (char c : s) {
         if (c == '\'') {
@@ -70,13 +78,14 @@ static std::string shellQuote(const std::string &s) {
 class offlineDetector
 {
 private:
-    cv::Size sensor_size;  ///< Logical image size used by the C++ pipeline
-    BufferedPort<ImageOf<PixelMono>> output_port;  ///< Port used to send images to YoloPose
-    BufferedPort<Bottle> input_port;               ///< Port used to receive skeleton
+    cv::Size sensor_size;
 
-    double period{0.1};
-    double tic{0.0};
-    bool waiting{false};
+    // Port used to send one selected image to the Python YOLO process.
+    BufferedPort<ImageOf<PixelMono>> output_port;
+
+    // Port used to receive the pose produced for that image.
+    BufferedPort<Bottle> input_port;
+
     bool launched_python{false};
 
     std::string local_img_out{"/YoloPose_offline/img:o"};
@@ -88,12 +97,10 @@ private:
 public:
     bool init(const std::string &model_path,
               const std::string &script_path,
-              double rate,
               const cv::Size &image_size,
               const std::string &device = std::string())
     {
         sensor_size = image_size;
-        period = (rate > 0.0) ? 1.0 / rate : 0.1;
 
         if (!yarp::os::Network::checkNetwork(2.0)) {
             yError() << "Could not connect to YARP. Start yarpserver first.";
@@ -104,6 +111,7 @@ public:
             yError() << "Could not open image output port:" << local_img_out;
             return false;
         }
+
         if (!input_port.open(local_sklt_in)) {
             yError() << "Could not open skeleton input port:" << local_sklt_in;
             output_port.close();
@@ -111,7 +119,7 @@ public:
         }
 
         // Start the Python Ultralytics/YARP sidecar. If script_path is empty,
-        // this class assumes the sidecar is already running in another terminal.
+        // assume that the sidecar is already running in another terminal.
         if (!script_path.empty()) {
             std::ostringstream cmd;
             cmd << "python3 " << shellQuote(script_path)
@@ -124,14 +132,14 @@ public:
             if (!device.empty()) {
                 std::string dev = device;
                 dev.erase(dev.begin(), std::find_if(dev.begin(), dev.end(),
-                    [](unsigned char ch){ return !std::isspace(ch); }));
+                    [](unsigned char ch) { return !std::isspace(ch); }));
                 dev.erase(std::find_if(dev.rbegin(), dev.rend(),
-                    [](unsigned char ch){ return !std::isspace(ch); }).base(), dev.end());
+                    [](unsigned char ch) { return !std::isspace(ch); }).base(), dev.end());
 
                 if (dev == "cpu" || dev.rfind("cpu", 0) == 0) {
                     cmd << " --device cpu";
                 } else if (dev.rfind("cuda:", 0) == 0) {
-                    std::string gpu_id = dev.substr(5);
+                    const std::string gpu_id = dev.substr(5);
                     cmd << " --device " << shellQuote(gpu_id);
                 } else {
                     cmd << " --device " << shellQuote(dev);
@@ -140,12 +148,14 @@ public:
 
             cmd << " & echo $! > " << pid_file;
 
-            int r = std::system(cmd.str().c_str());
-            if (r != 0) {
-                yError() << "Could not launch YoloPose Python sidecar with command:" << cmd.str();
+            const int result = std::system(cmd.str().c_str());
+            if (result != 0) {
+                yError() << "Could not launch YoloPose Python sidecar with command:"
+                         << cmd.str();
                 close();
                 return false;
             }
+
             launched_python = true;
         }
 
@@ -159,8 +169,10 @@ public:
             }
             yarp::os::Time::delay(0.1);
         }
+
         if (!ports_ready) {
-            yError() << "YoloPose sidecar ports not found. Expected" << yolo_img_in << "and" << yolo_sklt_out;
+            yError() << "YoloPose sidecar ports not found. Expected"
+                     << yolo_img_in << "and" << yolo_sklt_out;
             close();
             return false;
         }
@@ -170,6 +182,7 @@ public:
             close();
             return false;
         }
+
         if (!yarp::os::Network::connect(yolo_sklt_out, local_sklt_in, "fast_tcp")) {
             yError() << "Could not connect" << yolo_sklt_out << "->" << local_sklt_in;
             close();
@@ -195,74 +208,72 @@ public:
         }
     }
 
-    bool update(const cv::Mat &latest_image,
-                double latest_ts,
-                hpecore::stampedPose &previous_skeleton)
+    // Execute exactly one blocking YOLO inference for latest_image.
+    // Rate limiting is deliberately handled by main(), using video timestamps.
+    bool infer(const cv::Mat &latest_image,
+               double frame_ts,
+               hpecore::stampedPose &detected_skeleton)
     {
         if (latest_image.empty()) {
             return false;
         }
 
-        // Handle video timestamp reset/loop.
-        if (latest_ts < tic) {
-            tic = latest_ts - 2.0;
-            waiting = false;
+        cv::Mat gray;
+        if (latest_image.channels() == 3) {
+            cv::cvtColor(latest_image, gray, cv::COLOR_BGR2GRAY);
+        } else if (latest_image.channels() == 4) {
+            cv::cvtColor(latest_image, gray, cv::COLOR_BGRA2GRAY);
+        } else {
+            latest_image.convertTo(gray, CV_8U);
         }
 
-        // Send a new image if the detector is not already processing one, or
-        // force a resend if no reply has arrived for 2 seconds.
-        if ((!waiting && latest_ts - tic > period) || (latest_ts - tic > 2.0)) {
-            cv::Mat gray;
-            if (latest_image.channels() == 3) {
-                cv::cvtColor(latest_image, gray, cv::COLOR_BGR2GRAY);
-            } else if (latest_image.channels() == 4) {
-                cv::cvtColor(latest_image, gray, cv::COLOR_BGRA2GRAY);
-            } else {
-                latest_image.convertTo(gray, CV_8U);
-            }
-
-            if (gray.size() != sensor_size) {
-                cv::resize(gray, gray, sensor_size);
-            }
-
-            cv::GaussianBlur(gray, gray, cv::Size(5, 5), 0, 0);
-
-            ImageOf<PixelMono> &out_img = output_port.prepare();
-            out_img.copy(yarp::cv::fromCvMat<PixelMono>(gray));
-            output_port.write();
-
-            tic = latest_ts;
-            waiting = true;
+        if (gray.size() != sensor_size) {
+            cv::resize(gray, gray, sensor_size);
         }
 
-        // Read a ready skeleton without blocking the video loop.
-        Bottle *mn_container = input_port.read(false);
-        if (mn_container) {
-            previous_skeleton.pose = hpecore::extractSkeletonFromYARP<Bottle>(*mn_container);
-            previous_skeleton.conf = hpecore::extractConfidenceFromYARP<Bottle>(*mn_container);
-            previous_skeleton.timestamp = tic;
-            previous_skeleton.delay = latest_ts - tic;
-            waiting = false;
+        cv::GaussianBlur(gray, gray, cv::Size(5, 5), 0, 0);
+
+        ImageOf<PixelMono> &out_img = output_port.prepare();
+        out_img.copy(yarp::cv::fromCvMat<PixelMono>(gray));
+
+        const double wall_start = yarp::os::Time::now();
+        output_port.write();
+
+        // One request is outstanding, therefore the received Bottle belongs
+        // to the frame that was just sent.
+        Bottle *mn_container = input_port.read(true);
+        if (!mn_container) {
+            return false;
         }
 
-        return mn_container != nullptr;
+        detected_skeleton.pose =
+            hpecore::extractSkeletonFromYARP<Bottle>(*mn_container);
+        detected_skeleton.conf =
+            hpecore::extractConfidenceFromYARP<Bottle>(*mn_container);
+
+        // Timestamp of the video frame used for this inference.
+        detected_skeleton.timestamp = frame_ts;
+
+        // Real wall-clock processing latency of this YOLO inference.
+        detected_skeleton.delay = yarp::os::Time::now() - wall_start;
+
+        return hpecore::poseNonZero(detected_skeleton.pose);
     }
 };
 
-int main(int argc, char *argv[]){
-
-    // Prepare and configure the resource finder
+int main(int argc, char *argv[])
+{
     yarp::os::ResourceFinder rf;
     rf.setVerbose(false);
     rf.configure(argc, argv);
 
-    if(rf.check("help")) {
+    if (rf.check("help")) {
         std::stringstream ss;
         ss << "Usage: YoloPose_offline [options]\n\n";
         ss << "Options:\n";
         ss << std::left << std::setw(24) << "--data_file"       << std::setw(12) << "<string>" << ": path to input video file (.mp4)\n";
-        ss << std::left << std::setw(24) << "--output_period"   << std::setw(12) << "<double>" << ": CSV/vis output period (s), default 0.005\n";
-        ss << std::left << std::setw(24) << "--net_period"      << std::setw(12) << "<double>" << ": YoloPose update period (s), default 0.05\n";
+        ss << std::left << std::setw(24) << "--output_period"   << std::setw(12) << "<double>" << ": held-pose CSV/video output period (s), default 0.02\n";
+        ss << std::left << std::setw(24) << "--net_period"      << std::setw(12) << "<double>" << ": interval between YOLO inferences (s), default 0.05\n";
         ss << std::left << std::setw(24) << "--h"               << std::setw(12) << "<int>"    << ": image height (default 480)\n";
         ss << std::left << std::setw(24) << "--w"               << std::setw(12) << "<int>"    << ": image width (default 640)\n";
         ss << std::left << std::setw(24) << "--vis"             << std::setw(12) << ""         << ": enable on-screen visualization\n";
@@ -276,48 +287,118 @@ int main(int argc, char *argv[]){
         ss << std::left << std::setw(24) << "--gpu_file"        << std::setw(12) << "<string>" << ": output CSV for GPU telemetry\n";
         ss << std::left << std::setw(24) << "--gpu_period_ms"   << std::setw(12) << "<int>"    << ": nvidia-smi sampling period in ms\n";
         ss << std::left << std::setw(24) << "--gpu_index"       << std::setw(12) << "<int>"    << ": NVIDIA GPU index to monitor\n";
-        ss << std::left << std::setw(24) << "--device"          << std::setw(12) << "<string>" << ": 'cpu' or 'cuda:N' or GPU index\n";
+        ss << std::left << std::setw(24) << "--device"          << std::setw(12) << "<string>" << ": 'cpu', 'cuda:N', or GPU index\n";
         yInfo() << ss.str();
-        // exit after printing help
         return 0;
     }
 
-    // Read parameters from command line with default values
-    std::string datapath_file = rf.check("data_file", Value("/data/moveEnet_test/mp4/cam2_S11_Directions_1.mp4")).asString();
-    double output_period = rf.check("output_period", Value(0.005)).asFloat64();                     // CSV write period
-    double net_period = rf.check("net_period", Value(0.05)).asFloat64();                            // Range from 5ms to 100ms -> 200 Hz to 10 Hz
-    cv::Size res(rf.check("w", Value(640)).asInt32(), rf.check("h", Value(480)).asInt32());
-    bool is_visualize = rf.check("vis");                                                            // Visualization flag
-    std::string output_csv = rf.check("output_csv", Value("/tmp/YoloPose_output.csv")).asString();
-    bool no_csv = rf.check("no_csv");
-    std::string output_video = rf.check("output_video", Value("")).asString();
-    bool no_video = rf.check("no_video");
-    std::string yolo_model_path = rf.check("yolo_model_path", Value("/home/model_mounts/YoloPose/yolo26n-pose.pt")).asString();
-    std::string yolo_script_path = rf.check("YoloPose_script", Value("/home/model_mounts/YoloPose/YoloPose_yarp_server.py")).asString();
-    std::string powerjoular_file = rf.check("pwrjlr_file", Value("")).asString();
-    std::string gpu_monitor_file = rf.check("gpu_file", Value("/home/moveEnetFlow/pwr_gpu_file/single_test/YoloPose_gpu_pwr")).asString();
-    int gpu_monitor_period_ms = rf.check("gpu_period_ms", Value(5)).asInt32();
-    int gpu_monitor_index = rf.check("gpu_index", Value(0)).asInt32();
-    std::string device = rf.check("device", Value("")).asString();
+    // ===== READ PARAMETERS =====
+    const std::string datapath_file = rf.check(
+        "data_file",
+        Value("/data/eh36m_testing_set_S9S11/rgb/cam2_S9_Directions_1.mp4")
+    ).asString();
 
-    // Align GPU telemetry index with requested device when provided (e.g. --device cuda:0)
+    const double output_period = rf.check(
+        "output_period",
+        Value(0.02)
+    ).asFloat64();
+
+    const double net_period = rf.check(
+        "net_period",
+        Value(0.05)
+    ).asFloat64();
+
+    if (output_period <= 0.0) {
+        yError() << "--output_period must be greater than zero. Received:"
+                 << output_period;
+        return -1;
+    }
+
+    if (net_period <= 0.0) {
+        yError() << "--net_period must be greater than zero. Received:"
+                 << net_period;
+        return -1;
+    }
+
+    const cv::Size res(
+        rf.check("w", Value(640)).asInt32(),
+        rf.check("h", Value(480)).asInt32()
+    );
+
+    const bool is_visualize = rf.check("vis");
+    const std::string output_csv = rf.check(
+        "output_csv",
+        Value("/tmp/YoloPose_output.csv")
+    ).asString();
+    const bool no_csv = rf.check("no_csv");
+    std::string output_video = rf.check(
+        "output_video",
+        Value("")
+    ).asString();
+    const bool no_video = rf.check("no_video");
+    const std::string yolo_model_path = rf.check(
+        "yolo_model_path",
+        Value("/workspace/model_mounts/YoloPose/yolo26n-pose.pt")
+    ).asString();
+    const std::string yolo_script_path = rf.check(
+        "YoloPose_script",
+        Value("/workspace/model_mounts/YoloPose/YoloPose_yarp_server.py")
+    ).asString();
+    const std::string powerjoular_file = rf.check(
+        "pwrjlr_file",
+        Value("")
+    ).asString();
+    const std::string gpu_monitor_file = rf.check(
+        "gpu_file",
+        Value("/workspace/moveEnetFlow/pwr_gpu_file/single_test/YoloPose_gpu_pwr")
+    ).asString();
+    const int gpu_monitor_period_ms = rf.check(
+        "gpu_period_ms",
+        Value(5)
+    ).asInt32();
+    int gpu_monitor_index = rf.check(
+        "gpu_index",
+        Value(0)
+    ).asInt32();
+    const std::string device = rf.check(
+        "device",
+        Value("")
+    ).asString();
+
+    // Align GPU telemetry index with the requested YOLO device.
     if (!device.empty()) {
         std::string dev = device;
         std::string dev_l = dev;
         std::transform(dev_l.begin(), dev_l.end(), dev_l.begin(), ::tolower);
+
         if (dev_l.rfind("cpu", 0) != 0) {
             int parsed_gpu = 0;
-            size_t colon = dev.find(':');
+            const size_t colon = dev.find(':');
+
             if (colon != std::string::npos) {
-                std::string tail = dev.substr(colon + 1);
-                try { parsed_gpu = std::stoi(tail); } catch (...) { parsed_gpu = 0; }
-            } else if (!dev.empty() && std::all_of(dev.begin(), dev.end(), ::isdigit)) {
-                try { parsed_gpu = std::stoi(dev); } catch (...) { parsed_gpu = 0; }
+                const std::string tail = dev.substr(colon + 1);
+                try {
+                    parsed_gpu = std::stoi(tail);
+                } catch (...) {
+                    parsed_gpu = 0;
+                }
+            } else if (!dev.empty() &&
+                       std::all_of(dev.begin(), dev.end(), ::isdigit)) {
+                try {
+                    parsed_gpu = std::stoi(dev);
+                } catch (...) {
+                    parsed_gpu = 0;
+                }
             }
+
             gpu_monitor_index = parsed_gpu;
         }
     }
 
+    yInfo() << "Requested YOLO inference period:" << net_period << "s";
+    yInfo() << "Requested YOLO inference rate:" << 1.0 / net_period << "Hz";
+    yInfo() << "Requested held-pose output period:" << output_period << "s";
+    yInfo() << "Requested held-pose output rate:" << 1.0 / output_period << "Hz";
 
     // ===== POWER MONITORING =====
     PowerMonitor power_monitor;
@@ -327,120 +408,226 @@ int main(int argc, char *argv[]){
     power_cfg.gpu_period_ms = gpu_monitor_period_ms;
     power_cfg.gpu_index = gpu_monitor_index;
     power_cfg.target_pid = ::getpid();
+
     if (!power_monitor.start(power_cfg)) {
         return -1;
     }
 
     // ===== PREPARE CSV, VIDEO, AND VISUALIZATION RESOURCES =====
-    std::ofstream csv_file;                             // CSV file stream for logging results
-    std::vector<std::string> csv_buffer;                // store rows for deferred write
-    VisualizationContext vis_ctx;                      // Visualization and video writer resources
+    std::ofstream csv_file;
+    std::vector<std::string> csv_buffer;
+    VisualizationContext vis_ctx;
 
-    // CSV writer setup
+    // CSV format intentionally unchanged.
     if (!no_csv) {
         csv_file.open(output_csv);
         if (!csv_file.is_open()) {
             yError() << "Could not open CSV file for writing:" << output_csv;
+            power_monitor.stop();
             return -1;
         }
+
         yInfo() << "CSV logging enabled ->" << output_csv;
         csv_file << "timestamp,latency";
-        for (int j = 0; j < 13; j++) {
-            csv_file << "," << CSV_JOINT_NAMES[j] << "_x," << CSV_JOINT_NAMES[j] << "_y";
+        for (int j = 0; j < 13; ++j) {
+            csv_file << "," << CSV_JOINT_NAMES[j] << "_x,"
+                     << CSV_JOINT_NAMES[j] << "_y";
         }
         csv_file << "\n";
         csv_file.flush();
     }
 
-    // Visualization and video setup
-    if (!initialiseVisualization(vis_ctx, res, is_visualize, no_video, output_video, datapath_file, output_period)) {
+    if (!initialiseVisualization(
+            vis_ctx,
+            res,
+            is_visualize,
+            no_video,
+            output_video,
+            datapath_file,
+            output_period)) {
+        power_monitor.stop();
         return -1;
     }
-
 
     // ===== OPEN VIDEO FILE =====
     yInfo() << "Loading video:" << datapath_file;
     cv::VideoCapture cap(datapath_file);
     if (!cap.isOpened()) {
         yError() << "Could not open video file:" << datapath_file;
+        power_monitor.stop();
+        closeVisualization(vis_ctx, output_video);
         return -1;
     }
 
-    // Init detector ports
-    double detF = 1.0 / net_period;                     // Detection frequency in Hz
+    // ===== INITIALIZE YOLO SIDECAR =====
     offlineDetector yolo_handler;
-    if (!yolo_handler.init(yolo_model_path, yolo_script_path, detF, res, device)) {
+    if (!yolo_handler.init(
+            yolo_model_path,
+            yolo_script_path,
+            res,
+            device)) {
         yError() << "YoloPose init failed";
+        power_monitor.stop();
+        closeVisualization(vis_ctx, output_video);
         return -1;
     }
 
+    // ===== ALGORITHMIC STATE =====
+    hpecore::stampedPose detected_pose;
 
-    // ===== INITIALIZE ALGORITHMIC COMPONENTS =====
-    hpecore::stampedPose detected_pose;                 // Detected pose from YoloPose
-    hpecore::skeleton13 filtered_pose{};                // Last known filtered pose
-    bool pose_initialised = false;                      // True after first valid detection
+    // Last valid YOLO pose. This is held between inferences and also when an
+    // inference is executed but returns no valid person.
+    hpecore::stampedPose held_pose;
+    hpecore::skeleton13 filtered_pose{};
+    bool pose_initialised = false;
 
-    double tnow = 0.0;                                  // Current simulation time
-    double next_csv_upd = output_period;               // time threshold for next CSV row
-    double next_vis_upd = output_period;               // time threshold for next visualization frame
+    // Independent video-time schedules.
+    double next_inference_ts = 0.0;
+    double next_output_ts = 0.0;
+    bool schedules_initialised = false;
 
+    constexpr double time_epsilon = 1e-9;
 
-    // ===== MAIN PROCESSING LOOP (frame-by-frame) =====
+    std::size_t inference_count = 0;
+    std::size_t valid_inference_count = 0;
+    double first_inference_ts = -1.0;
+    double last_inference_ts = -1.0;
 
     int frame_count = 0;
+    bool stop_requested = false;
 
-    while (true) {
+    // Previous RGB frame is used when generating held outputs whose timestamp
+    // lies between the previous frame and the current frame. This prevents
+    // using a future RGB image for an earlier visualization timestamp.
+    cv::Mat previous_frame;
 
-        // Read next frame
+    // Append one output sample. The CSV schema remains exactly the same.
+    // For held samples, latency is the latency of the inference that produced
+    // the currently held pose.
+    auto emit_output = [&](double output_ts, const cv::Mat &visual_frame) -> bool {
+        // Preserve the old behavior before the first valid detection: no pose
+        // is written until a valid pose exists to hold.
+        if (!pose_initialised) {
+            return false;
+        }
+
+        if (csv_file.is_open()) {
+            std::ostringstream row;
+            row << std::fixed << std::setprecision(6) << output_ts;
+            row << "," << held_pose.delay;
+
+            for (int j = 0; j < 13; ++j) {
+                const int hpe_idx = CSV_HPE_ORDER[j];
+                row << "," << filtered_pose[hpe_idx].u
+                    << "," << filtered_pose[hpe_idx].v;
+            }
+
+            csv_buffer.push_back(row.str());
+        }
+
+        if ((is_visualize || (!output_video.empty() && !no_video)) &&
+            !visual_frame.empty()) {
+            renderVisualizationFrameOP(
+                vis_ctx,
+                visual_frame,
+                pose_initialised,
+                filtered_pose,
+                held_pose,
+                output_ts
+            );
+            writeVisualizationFrame(vis_ctx, pose_initialised);
+
+            if (showVisualizationFrame(vis_ctx)) {
+                yInfo() << "User requested stop";
+                return true;
+            }
+        }
+
+        return false;
+    };
+
+    // ===== MAIN PROCESSING LOOP =====
+    while (!stop_requested) {
         cv::Mat frame;
         if (!cap.read(frame)) {
             yInfo() << "End of video reached after" << frame_count << "frames.";
             break;
         }
-        frame_count++;
 
-        tnow = cap.get(cv::CAP_PROP_POS_MSEC) / 100.0; // current timestamp in seconds
+        ++frame_count;
+        const double tnow = cap.get(cv::CAP_PROP_POS_MSEC) / 1000.0;
 
-        // Send frames to YoloPose at net_period intervals and read returned skeletons.
-        // The rate limiting is implemented inside offlineDetector::update().
-        bool was_detected = yolo_handler.update(frame, tnow, detected_pose);
-        if (was_detected && hpecore::poseNonZero(detected_pose.pose)) {
-            filtered_pose = detected_pose.pose;
-            pose_initialised = true;
+        if (!schedules_initialised) {
+            // Anchor both schedules to the timestamp of the first video frame.
+            next_inference_ts = tnow;
+            next_output_ts = tnow;
+            schedules_initialised = true;
         }
 
-        // CSV logging at output_period rate
-        if (tnow >= next_csv_upd) {
-            next_csv_upd += output_period;
-            if (pose_initialised && csv_file.is_open()) {
-                std::ostringstream row;
-                row << std::fixed << std::setprecision(6) << tnow;
-                double lat = (detected_pose.timestamp > 0) ? detected_pose.delay : 0.0;
-                row << "," << lat;
-                for (int j = 0; j < 13; j++) {
-                    int hpe_idx = CSV_HPE_ORDER[j];
-                    row << "," << filtered_pose[hpe_idx].u << "," << filtered_pose[hpe_idx].v;
-                }
-                csv_buffer.push_back(row.str());
-            }
-        }
+        // 1. Produce every scheduled output strictly before the current frame.
+        // These samples must use the pose and RGB frame available before tnow.
+        const cv::Mat &held_visual_frame =
+            previous_frame.empty() ? frame : previous_frame;
 
-        // Visualization
-        if ((is_visualize || (!output_video.empty() && !no_video)) && tnow >= next_vis_upd) {
-            next_vis_upd += output_period;
-            renderVisualizationFrameOP(vis_ctx, frame, pose_initialised, filtered_pose, detected_pose, tnow);
-            writeVisualizationFrame(vis_ctx, pose_initialised);
-            if (showVisualizationFrame(vis_ctx)) {
-                yInfo() << "User requested stop";
+        while (next_output_ts < tnow - time_epsilon) {
+            if (emit_output(next_output_ts, held_visual_frame)) {
+                stop_requested = true;
                 break;
             }
+            next_output_ts += output_period;
         }
 
+        if (stop_requested) {
+            break;
+        }
 
+        // 2. Execute at most one YOLO inference for the current video frame,
+        // only when the next net_period deadline has been reached.
+        if (tnow + time_epsilon >= next_inference_ts) {
+            if (inference_count == 0) {
+                first_inference_ts = tnow;
+            }
+
+            last_inference_ts = tnow;
+            ++inference_count;
+
+            const bool valid_pose = yolo_handler.infer(
+                frame,
+                tnow,
+                detected_pose
+            );
+
+            if (valid_pose) {
+                held_pose = detected_pose;
+                filtered_pose = detected_pose.pose;
+                pose_initialised = true;
+                ++valid_inference_count;
+            }
+            // If YOLO returns an invalid pose, keep the previous valid pose.
+
+            // Advance the absolute inference schedule. If the requested rate is
+            // higher than the video frame rate, multiple deadlines may have
+            // elapsed; only one inference can be performed per available frame.
+            do {
+                next_inference_ts += net_period;
+            } while (next_inference_ts <= tnow + time_epsilon);
+        }
+
+        // 3. Produce outputs coincident with the current frame timestamp after
+        // the possible inference. Therefore a newly computed pose is available
+        // starting from its own frame timestamp, never before it.
+        while (next_output_ts <= tnow + time_epsilon) {
+            if (emit_output(next_output_ts, frame)) {
+                stop_requested = true;
+                break;
+            }
+            next_output_ts += output_period;
+        }
+
+        previous_frame = frame.clone();
     }
 
-
-    // Cleanup
+    // ===== CLEANUP =====
     if (csv_file.is_open()) {
         for (const auto &line : csv_buffer) {
             csv_file << line << "\n";
@@ -448,9 +635,21 @@ int main(int argc, char *argv[]){
         csv_file.close();
         yInfo() << "CSV rows written:" << csv_buffer.size() << "->" << output_csv;
     }
+
+    yInfo() << "YOLO inferences completed:" << inference_count;
+    yInfo() << "YOLO valid inferences:" << valid_inference_count;
+
+    if (inference_count > 1 && last_inference_ts > first_inference_ts) {
+        const double observed_inference_rate =
+            static_cast<double>(inference_count - 1) /
+            (last_inference_ts - first_inference_ts);
+
+        yInfo() << "Requested inference rate:" << 1.0 / net_period << "Hz";
+        yInfo() << "Observed inference rate:" << observed_inference_rate << "Hz";
+    }
+
     power_monitor.stop();
     yolo_handler.close();
-
     closeVisualization(vis_ctx, output_video);
 
     return 0;
