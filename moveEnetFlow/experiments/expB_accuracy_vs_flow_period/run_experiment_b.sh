@@ -10,24 +10,34 @@ EXP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # -----------------------------------------------------------------------------
 # Defaults that can be overridden from the command line
 # -----------------------------------------------------------------------------
-DATASET="dhp19"                         # allowed: eh36m, dhp19
-BINARY="/home/moveEnetFlow/build/moveEnetOFK_offline"
+DATASET="eh36m"                         # allowed: eh36m, dhp19
+BINARY="/workspace/moveEnetFlow/build/moveEnetOFK_offline"
 
 DATA_FILE=""                            # optional single */chXdvs/data.log file
 DATA_GLOB=""                            # pattern used by find under DATA_ROOT
-DATA_ROOT=""
-CHECKPOINT_PATH=""
-RAW_DIR=""
-LOG_DIR=""
-IMG_W=""
-IMG_H=""
+
+# eh36m
+DATA_ROOT="/data/eh36m_testing_set_S9S11/events"
+CHECKPOINT_PATH="/usr/local/src/hpe-core/example/movenet/models/e97_valacc0.81209.pth"
+RAW_DIR="$EXP_DIR/eh36m_full_test/results/raw"                                    # Output directory for raw CSV results
+LOG_DIR="$EXP_DIR/eh36m_full_test/results/logs"                                   # Output directory for execution logs
+IMG_W="640"
+IMG_H="480"
+
+# # dhp19
+# DATA_ROOT="/data/dhp19_testing_set_S13toS17"
+# CHECKPOINT_PATH="/usr/local/src/hpe-core/example/movenet/models/dhp19_allcams_e33_valacc0.87996.pth"
+# RAW_DIR="$EXP_DIR/dhp19_full_test/results/raw"                                    # Output directory for raw CSV results
+# LOG_DIR="$EXP_DIR/dhp19_full_test/results/logs"                                   # Output directory for execution logs
+# IMG_W="346"
+# IMG_H="260"
 
 # Network periods in seconds.
 # Defaults match the historical Experiment B runs: 50 Hz, 20 Hz, 10 Hz.
 NETWORK_PERIODS=("0.02" "0.05" "0.1")
 
 # Optical-flow periods in seconds.
-FLOW_PERIODS=("0.005" "0.01" "0.02" "0.05" "0.1")
+FLOW_PERIODS=("0.005" "0.01" "0.02" )
 
 OUTPUT_PERIOD="0.005"                   # CSV output sampling period, seconds
 DEVICE="cuda:0"
@@ -39,7 +49,7 @@ MEAS_UV="0.97"
 ROI="20"
 
 # Feature flags
-USE_LC="false"
+USE_LC="true"
 INCLUDE_VELOCITIES="false"
 GPU_PERIOD_MS="5"
 
