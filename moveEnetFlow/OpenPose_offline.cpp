@@ -235,6 +235,7 @@ int main(int argc, char *argv[]){
     std::string output_video = rf.check("output_video", Value("tmp/output.mp4")).asString();
     bool no_video = rf.check("no_video");
     std::string op_model_path = rf.check("op_model_path", Value("/usr/local/src/openpose/models/")).asString();
+    // std::string op_model_path = rf.check("op_model_path", Value("/model mounts/OpenPose/")).asString();
     std::string powerjoular_file = rf.check("pwrjlr_file", Value("")).asString();
     std::string gpu_monitor_file = rf.check("gpu_file", Value("tmp/gpu_monitor.csv")).asString();
     int gpu_monitor_period_ms = rf.check("gpu_period_ms", Value(5)).asInt32();
