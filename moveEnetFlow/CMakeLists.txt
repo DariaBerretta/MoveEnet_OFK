@@ -102,6 +102,34 @@ target_link_libraries(eventPointPose_offline
     hpe-core::hpe-core
 )
 
+add_executable(eventPointPose_offline_no_rolling
+    eventPointPose_offline_no_rolling.cpp
+    utils/power_monitor.cpp
+    utils/visualization_utils.cpp
+    utils/device_utils.cpp
+)
+
+target_link_libraries(eventPointPose_offline_no_rolling
+    ${YARP_LIBRARIES}
+    ${OpenCV_LIBS}
+    ev::event-driven
+    hpe-core::hpe-core
+)
+
+add_executable(eventPointPose_hotpixel_mask
+    eventPointPose_hotpixel_mask.cpp
+    utils/power_monitor.cpp
+    utils/visualization_utils.cpp
+    utils/device_utils.cpp
+)
+
+target_link_libraries(eventPointPose_hotpixel_mask
+    ${YARP_LIBRARIES}
+    ${OpenCV_LIBS}
+    ev::event-driven
+    hpe-core::hpe-core
+)
+
 #add_executable(eventPointPose_offline_preprocessed
 #    eventPointPose_offline_preprocessed.cpp
 #    utils/power_monitor.cpp
@@ -128,27 +156,5 @@ target_link_libraries(eventPointPose_offline
 #     ${YARP_LIBRARIES}
 #     ${OpenCV_LIBS}
 #     ev::event-driven
-#     hpe-core::hpe-core
-# )
-
-# Build tDenseRNN offline pipeline for DHP19 raw event logs.
-# add_executable(tDense_offline
-#     tDense_offline.cpp
-#     tdense_detector.cpp
-# )
-# target_link_libraries(tDense_offline
-#     ${YARP_LIBRARIES}
-#     ${OpenCV_LIBS}
-#     ev::event-driven
-#     hpe-core::hpe-core
-# )
-
-# add_executable(tdense_detector_tests
-#     tdense_detector_tests.cpp
-#     tdense_detector.cpp
-# )
-# target_link_libraries(tdense_detector_tests
-#     ${YARP_LIBRARIES}
-#     ${OpenCV_LIBS}
 #     hpe-core::hpe-core
 # )
