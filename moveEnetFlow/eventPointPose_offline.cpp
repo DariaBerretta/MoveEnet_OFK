@@ -1,669 +1,854 @@
-// EventPointPose offline runner - PointNet/RasEPC integration.
+// EventPointPose offline DHP19 runner.
 //
-// This file fills the YARP-side integration that was missing in the uploaded
-// eventPointPose_offline.cpp. The Python sidecar performs the actual PyTorch
-// inference and rasterized event-point-cloud preprocessing. C++ keeps the same
-// offline-pipeline responsibility: read event windows, send them to the model,
-// receive hpe-core skeleton13 predictions, write CSV, and optionally visualize.
+// The runner preserves two independent dataset-time schedules:
+//   --net_period     : event batches sent to the Python PointNet sidecar
+//   --output_period  : zero-order-held pose rows written to CSV
+//
+// Input data.log files are read with ev::offlineLoader<ev::AE>. Every event
+// carries the timestamp of its YARP packet, as required by this deployment.
+// The Python process owns the persistent 7500-event FIFO, RasEPC, deterministic
+// 2048-point sampling, PointNet inference, and the hpe-core joint remapping.
 
 #include <yarp/os/all.h>
-#include <yarp/os/Bottle.h>
 #include <event-driven/core.h>
-#include <event-driven/algs.h>
-#include <event-driven/vis.h>
-#include <hpe-core/utility.h>
-#include <opencv2/opencv.hpp>
-#include <array>
+
 #include <algorithm>
-#include <cstdlib>
-#include <cstdint>
+#include <array>
+#include <cctype>
 #include <cmath>
-#include <deque>
+#include <csignal>
+#include <cstdlib>
 #include <fstream>
 #include <iomanip>
+#include <limits>
 #include <sstream>
 #include <string>
-#include <tuple>
 #include <unistd.h>
 #include <vector>
 
-#include "utils/power_monitor.h"
-#include "utils/visualization_utils.h"
-
-using namespace yarp::os;
-using std::string;
+using yarp::os::Bottle;
+using yarp::os::BufferedPort;
+using yarp::os::Network;
+using yarp::os::NetworkBase;
+using yarp::os::ResourceFinder;
 using yarp::os::Value;
 
 namespace {
 
-struct EventPoint {
-    double x{0.0};
-    double y{0.0};
-    double t{0.0};
-    double p{0.0};
-};
+constexpr int kJointCount = 13;
+constexpr double kTimeEpsilon = 1.0e-9;
 
-// CSV order: match moveEnetOFK_offline (joint index order 0..12)
-static const std::array<int, 13> CSV_HPE_ORDER = {
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12
-};
+volatile std::sig_atomic_t gStopRequested = 0;
 
-static const std::array<const char*, 13> CSV_JOINT_NAMES = {
-    "joint0",
-    "joint1",
-    "joint2",
-    "joint3",
-    "joint4",
-    "joint5",
-    "joint6",
-    "joint7",
-    "joint8",
-    "joint9",
-    "joint10",
-    "joint11",
-    "joint12"
-};
-
-static std::string shellQuote(const std::string &s) {
-    std::string out = "'";
-    for (char c : s) {
-        if (c == '\'') out += "'\\''";
-        else out += c;
-    }
-    out += "'";
-    return out;
+void handleTerminationSignal(int)
+{
+    gStopRequested = 1;
 }
 
-static cv::Mat eventsToFrame(const std::vector<EventPoint> &events, const cv::Size &res) {
-    // Accumulate per-pixel event counts then normalize using a 3-sigma rule
-    cv::Mat counts(res, CV_64F, cv::Scalar(0));
-    for (const auto &e : events) {
-        int x = static_cast<int>(std::lround(e.x));
-        int y = static_cast<int>(std::lround(e.y));
-        x = std::max(0, std::min(res.width - 1, x));
-        y = std::max(0, std::min(res.height - 1, y));
-        counts.at<double>(y, x) += 1.0;
-    }
+bool isReadableFile(const std::string &path)
+{
+    std::ifstream stream(path, std::ios::in | std::ios::binary);
+    return stream.good();
+}
 
-    // If no events, return empty (black) frame
-    double sum = 0.0;
-    int nz = 0;
-    for (int r = 0; r < counts.rows; ++r) {
-        const double *row = counts.ptr<double>(r);
-        for (int c = 0; c < counts.cols; ++c) {
-            double v = row[c];
-            if (v > 0.0) {
-                sum += v;
-                ++nz;
-            }
+struct EventRecord
+{
+    int x{0};
+    int y{0};
+    int polarity{0};
+    double packet_timestamp{0.0};
+};
+
+struct Joint
+{
+    double x{0.0};
+    double y{0.0};
+};
+
+struct PoseSample
+{
+    std::array<Joint, kJointCount> joints{};
+    std::array<double, kJointCount> confidence{};
+    double timestamp{0.0};
+    double latency{0.0};
+};
+
+struct ServerReply
+{
+    bool transport_ok{false};
+    bool has_pose{false};
+    std::string status{"ERROR"};
+    std::string message;
+    int fifo_size{0};
+    int accepted_events{0};
+    int rasepc_points{0};
+    double server_processing_time{0.0};
+    PoseSample pose{};
+};
+
+std::string shellQuote(const std::string &input)
+{
+    std::string output = "'";
+    for (char c : input) {
+        if (c == '\'') {
+            output += "'\\''";
+        } else {
+            output += c;
         }
     }
-    if (nz == 0) {
-        return cv::Mat(res, CV_8UC1, cv::Scalar(0));
-    }
+    output += "'";
+    return output;
+}
 
-    double mean = sum / nz;
-    double var_sum = 0.0;
-    for (int r = 0; r < counts.rows; ++r) {
-        const double *row = counts.ptr<double>(r);
-        for (int c = 0; c < counts.cols; ++c) {
-            double v = row[c];
-            if (v > 0.0) {
-                double d = v - mean;
-                var_sum += d * d;
-            }
-        }
-    }
-    double var = (nz > 1) ? (var_sum / (nz - 1)) : var_sum;
-    double sig = std::sqrt(var);
-    if (sig < (0.1 / 255.0)) {
-        sig = 0.1 / 255.0;
-    }
+std::string trim(std::string value)
+{
+    value.erase(value.begin(), std::find_if(value.begin(), value.end(),
+        [](unsigned char c) { return !std::isspace(c); }));
+    value.erase(std::find_if(value.rbegin(), value.rend(),
+        [](unsigned char c) { return !std::isspace(c); }).base(), value.end());
+    return value;
+}
 
-    const double numSDevs = 3.0;
-    const double range_old = numSDevs * sig; // scaling factor
-    const double range_new = 255.0;
-
-    cv::Mat out(res, CV_8UC1, cv::Scalar(0));
-    for (int r = 0; r < counts.rows; ++r) {
-        const double *inrow = counts.ptr<double>(r);
-        unsigned char *outrow = out.ptr<unsigned char>(r);
-        for (int c = 0; c < counts.cols; ++c) {
-            double v = inrow[c];
-            if (v <= 0.0) {
-                outrow[c] = 0;
-            } else {
-                double f = (v * range_new) / range_old;
-                if (f > 255.0) f = 255.0;
-                if (f < 0.0) f = 0.0;
-                outrow[c] = static_cast<unsigned char>(std::floor(f));
-            }
-        }
+int inferCameraFromPath(const std::string &path)
+{
+    if (path.find("ch2dvs") != std::string::npos) {
+        return 2;
     }
-    return out;
+    if (path.find("ch3dvs") != std::string::npos) {
+        return 3;
+    }
+    return -1;
+}
+
+std::string defaultServerLog()
+{
+    return "/tmp/eventpointpose_server_" + std::to_string(::getpid()) + ".log";
+}
+
+void writeCsvHeader(std::ofstream &csv)
+{
+    csv << "timestamp,latency";
+    for (int joint = 0; joint < kJointCount; ++joint) {
+        csv << ",joint" << joint << "_x,joint" << joint << "_y";
+    }
+    csv << "\n";
+    csv.flush();
 }
 
 } // namespace
 
-class eventPointPose_Detector
+class EventPointPoseClient
 {
 private:
-    BufferedPort<Bottle> output_port;
-    BufferedPort<Bottle> input_port;
+    BufferedPort<Bottle> request_port;
+    BufferedPort<Bottle> response_port;
 
-    double period{0.05};
-    double tic{0.0};
-    bool waiting{false};
     bool launched_python{false};
+    bool connected{false};
+    double response_timeout_s{0.0};
+    int camera_id{2};
 
-    std::string local_events_out;
-    std::string local_sklt_in;
-    std::string epp_events_in{ "/eventPointPose/events:i" };
-    std::string epp_sklt_out{ "/eventPointPose/sklt:o" };
+    std::string local_request_port;
+    std::string local_response_port;
+    std::string server_request_port;
+    std::string server_response_port;
     std::string pid_file;
 
-public:
-    bool init(const std::string &output_name,
-              const std::string &input_name,
-              const std::string &checkpoint_path,
-              const std::string &script_path,
-              double rate,
-              const cv::Size &sensor_size,
-              int num_points,
-              const std::string &device,
-              bool swap_lr)
+    Bottle *readResponse()
     {
-        local_events_out = output_name;
-        local_sklt_in = input_name;
-        period = (rate > 0.0) ? 1.0 / rate : 0.05;
-        pid_file = "/tmp/eventpointpose_offline_python_" + std::to_string(::getpid()) + ".pid";
+        if (response_timeout_s <= 0.0) {
+            return response_port.read(true);
+        }
 
-        const std::string suffix = "_" + std::to_string(::getpid());
-        epp_events_in = "/eventPointPose/events:i" + suffix;
-        epp_sklt_out  = "/eventPointPose/sklt:o" + suffix;
+        const double deadline = yarp::os::Time::now() + response_timeout_s;
+        while (yarp::os::Time::now() < deadline) {
+            Bottle *response = response_port.read(false);
+            if (response != nullptr) {
+                return response;
+            }
+            yarp::os::Time::delay(0.001);
+        }
+        return nullptr;
+    }
 
-        if (!yarp::os::Network::checkNetwork(2.0)) {
+public:
+    bool init(const std::string &model_path,
+              const std::string &script_path,
+              const std::string &device,
+              int camera,
+              int width,
+              int height,
+              int fifo_size,
+              int num_points,
+              int seed,
+              const std::string &input_preprocessing,
+              const std::string &background_domain,
+              double background_dt_us,
+              const std::string &hotpixel_path,
+              const std::string &dump_dir,
+              int dump_first_n,
+              bool server_verbose,
+              double startup_timeout_s,
+              double response_timeout,
+              const std::string &server_log,
+              const std::string &configured_server_request_port,
+              const std::string &configured_server_response_port)
+    {
+        response_timeout_s = response_timeout;
+        camera_id = camera;
+
+        const std::string pid_suffix = std::to_string(::getpid());
+        local_request_port = "/EventPointPose_offline/" + pid_suffix + "/events:o";
+        local_response_port = "/EventPointPose_offline/" + pid_suffix + "/sklt:i";
+        server_request_port = configured_server_request_port.empty()
+            ? "/EventPointPose/" + pid_suffix + "/events:i"
+            : configured_server_request_port;
+        server_response_port = configured_server_response_port.empty()
+            ? "/EventPointPose/" + pid_suffix + "/sklt:o"
+            : configured_server_response_port;
+        pid_file = "/tmp/eventpointpose_offline_python_" + pid_suffix + ".pid";
+
+        if (!Network::checkNetwork(2.0)) {
             yError() << "Could not connect to YARP. Start yarpserver first.";
             return false;
         }
-
-        // Clean stale local registrations from a previous crashed run.
-        yarp::os::Network::unregisterName(local_events_out);
-        yarp::os::Network::unregisterName(local_sklt_in);
-
-        if (!output_port.open(local_events_out)) {
-            yError() << "Could not open EventPointPose event output port:" << local_events_out;
+        if (!script_path.empty() && !isReadableFile(script_path)) {
+            yError() << "EventPointPose server script is not readable:" << script_path;
             return false;
         }
-        if (!input_port.open(local_sklt_in)) {
-            yError() << "Could not open EventPointPose skeleton input port:" << local_sklt_in;
-            output_port.close();
+        if (!script_path.empty() && !isReadableFile(model_path)) {
+            yError() << "PointNet checkpoint is not readable:" << model_path;
+            return false;
+        }
+
+        if (!request_port.open(local_request_port)) {
+            yError() << "Could not open request port:" << local_request_port;
+            return false;
+        }
+        if (!response_port.open(local_response_port)) {
+            yError() << "Could not open response port:" << local_response_port;
+            request_port.close();
             return false;
         }
 
         if (!script_path.empty()) {
-            std::ostringstream cmd;
-            cmd << "python3 " << shellQuote(script_path)
-                << " --checkpoint " << shellQuote(checkpoint_path)
-                << " --events_port " << epp_events_in
-                << " --sklt_port " << epp_sklt_out
-                << " --sensor_w " << sensor_size.width
-                << " --sensor_h " << sensor_size.height
-                << " --num_points " << num_points
-                << " --coord_transform dhp19_last"
-                << " --enable_prefilter"
-                << " --timestamps_us";
-            if (swap_lr) {
-                cmd << " --swap_lr";
-            }
-            if (!device.empty()) {
-                cmd << " --device " << shellQuote(device);
-            }
-            cmd << " & echo $! > " << pid_file;
+            std::ostringstream command;
+            command << "python3 " << shellQuote(script_path)
+                    << " --model " << shellQuote(model_path)
+                    << " --event_port " << shellQuote(server_request_port)
+                    << " --sklt_port " << shellQuote(server_response_port)
+                    << " --device " << shellQuote(trim(device))
+                    << " --w " << width
+                    << " --h " << height
+                    << " --fifo_size " << fifo_size
+                    << " --num_points " << num_points
+                    << " --rasepc_channels 4"
+                    << " --seed " << seed
+                    << " --input_preprocessing " << shellQuote(input_preprocessing)
+                    << " --background_domain " << shellQuote(background_domain)
+                    << " --background_dt_us " << std::setprecision(12) << background_dt_us;
 
-            int r = std::system(cmd.str().c_str());
-            if (r != 0) {
-                yError() << "Could not launch EventPointPose sidecar:" << cmd.str();
+            if (!hotpixel_path.empty()) {
+                command << " --hotpixel_path " << shellQuote(hotpixel_path);
+            }
+            if (!dump_dir.empty()) {
+                command << " --dump_debug_dir " << shellQuote(dump_dir)
+                        << " --dump_first_n " << dump_first_n;
+            }
+            if (server_verbose) {
+                command << " --verbose";
+            }
+            if (!server_log.empty()) {
+                command << " > " << shellQuote(server_log) << " 2>&1";
+            }
+            command << " & echo $! > " << shellQuote(pid_file);
+
+            const int launch_result = std::system(command.str().c_str());
+            if (launch_result != 0) {
+                yError() << "Could not launch EventPointPose sidecar with command:"
+                         << command.str();
                 close();
                 return false;
             }
             launched_python = true;
         }
 
+        const double startup_deadline = yarp::os::Time::now() + startup_timeout_s;
         bool ports_ready = false;
-        for (int i = 0; i < 100; ++i) {
-            if (yarp::os::NetworkBase::exists(epp_events_in) &&
-                yarp::os::NetworkBase::exists(epp_sklt_out)) {
+        while (yarp::os::Time::now() < startup_deadline) {
+            if (NetworkBase::exists(server_request_port) &&
+                NetworkBase::exists(server_response_port)) {
                 ports_ready = true;
                 break;
             }
             yarp::os::Time::delay(0.1);
         }
+
         if (!ports_ready) {
-            yError() << "EventPointPose sidecar ports not found. Expected" << epp_events_in << "and" << epp_sklt_out;
+            yError() << "EventPointPose sidecar ports not found. Expected"
+                     << server_request_port << "and" << server_response_port;
+            if (!server_log.empty()) {
+                yError() << "Server log:" << server_log;
+            }
             close();
             return false;
         }
 
-        if (!yarp::os::Network::connect(local_events_out, epp_events_in, "fast_tcp")) {
-            yError() << "Could not connect" << local_events_out << "->" << epp_events_in;
+        if (!Network::connect(local_request_port, server_request_port, "fast_tcp")) {
+            yError() << "Could not connect" << local_request_port
+                     << "->" << server_request_port;
             close();
             return false;
         }
-        if (!yarp::os::Network::connect(epp_sklt_out, local_sklt_in, "fast_tcp")) {
-            yError() << "Could not connect" << epp_sklt_out << "->" << local_sklt_in;
+        if (!Network::connect(server_response_port, local_response_port, "fast_tcp")) {
+            yError() << "Could not connect" << server_response_port
+                     << "->" << local_response_port;
             close();
             return false;
         }
 
-        yInfo() << "EventPointPose PointNet sidecar connected.";
+        connected = true;
+        yInfo() << "EventPointPose sidecar connected.";
+        yInfo() << "Request port:" << local_request_port << "->" << server_request_port;
+        yInfo() << "Response port:" << server_response_port << "->" << local_response_port;
         return true;
+    }
+
+    ServerReply infer(const std::vector<EventRecord> &events,
+                      double inference_timestamp,
+                      int camera,
+                      int request_id)
+    {
+        ServerReply result;
+        if (!connected) {
+            result.message = "YARP client is not connected.";
+            return result;
+        }
+
+        Bottle &request = request_port.prepare();
+        request.clear();
+        request.addInt32(request_id);
+        request.addFloat64(inference_timestamp);
+        request.addInt32(camera);
+        Bottle &payload = request.addList();
+        for (const EventRecord &event : events) {
+            // Python expects [x, y, packet_timestamp, polarity].
+            payload.addInt32(event.x);
+            payload.addInt32(event.y);
+            payload.addFloat64(event.packet_timestamp);
+            payload.addInt32(event.polarity);
+        }
+
+        const double wall_start = yarp::os::Time::now();
+        request_port.write();
+        Bottle *response = readResponse();
+        if (response == nullptr) {
+            result.status = "TIMEOUT";
+            result.message = "Timed out waiting for EventPointPose response.";
+            return result;
+        }
+
+        result.transport_ok = true;
+        result.pose.latency = yarp::os::Time::now() - wall_start;
+        result.pose.timestamp = inference_timestamp;
+
+        if (response->size() < 3) {
+            result.transport_ok = false;
+            result.status = "PROTOCOL_ERROR";
+            result.message = "Response contains fewer than three elements.";
+            return result;
+        }
+
+        result.status = response->get(2).asString();
+        const int response_id = response->size() > 3
+            ? response->get(3).asInt32()
+            : request_id;
+        if (response_id != request_id) {
+            result.transport_ok = false;
+            result.status = "PROTOCOL_ERROR";
+            result.message = "Response request id does not match the outstanding request.";
+            return result;
+        }
+
+        if (response->size() > 4) {
+            Bottle *diagnostics = response->get(4).asList();
+            if (diagnostics != nullptr && diagnostics->size() >= 4) {
+                result.accepted_events = static_cast<int>(diagnostics->get(0).asFloat64());
+                result.fifo_size = static_cast<int>(diagnostics->get(1).asFloat64());
+                result.rasepc_points = static_cast<int>(diagnostics->get(2).asFloat64());
+                // The sidecar reports this diagnostic in milliseconds.
+                result.server_processing_time = diagnostics->get(3).asFloat64() * 0.001;
+            }
+        }
+        if (response->size() > 5) {
+            result.message = response->get(5).asString();
+        }
+
+        if (result.status != "OK") {
+            return result;
+        }
+
+        Bottle *pose_payload = response->get(1).asList();
+        if (pose_payload == nullptr || pose_payload->size() < 39) {
+            result.transport_ok = false;
+            result.status = "PROTOCOL_ERROR";
+            result.message = "OK response does not contain the 39-value hpe-core payload.";
+            return result;
+        }
+
+        for (int joint = 0; joint < kJointCount; ++joint) {
+            result.pose.joints[joint].x = pose_payload->get(2 * joint).asFloat64();
+            result.pose.joints[joint].y = pose_payload->get(2 * joint + 1).asFloat64();
+            result.pose.confidence[joint] =
+                pose_payload->get(26 + joint).asFloat64();
+        }
+        result.has_pose = true;
+        return result;
     }
 
     void close()
     {
-        yarp::os::Network::disconnect(local_events_out, epp_events_in);
-        yarp::os::Network::disconnect(epp_sklt_out, local_sklt_in);
-        output_port.close();
-        input_port.close();
+        if (connected) {
+            Bottle &request = request_port.prepare();
+            request.clear();
+            request.addInt32(-1);
+            request.addFloat64(0.0);
+            request.addInt32(camera_id);
+            request.addList();
+            request_port.write();
+            yarp::os::Time::delay(0.05);
+        }
+
+        request_port.close();
+        response_port.close();
+        connected = false;
 
         if (launched_python) {
-            std::ostringstream cmd;
-            cmd << "if [ -f " << pid_file << " ]; then "
-                << "kill $(cat " << pid_file << ") 2>/dev/null; "
-                << "rm -f " << pid_file << "; fi";
-            std::system(cmd.str().c_str());
+            std::ostringstream command;
+            command << "if [ -f " << shellQuote(pid_file) << " ]; then "
+                    << "pid=$(cat " << shellQuote(pid_file) << "); "
+                    << "kill $pid 2>/dev/null || true; "
+                    << "i=0; while kill -0 $pid 2>/dev/null && [ $i -lt 20 ]; do "
+                    << "sleep 0.05; i=$((i+1)); done; "
+                    << "kill -9 $pid 2>/dev/null || true; "
+                    << "rm -f " << shellQuote(pid_file) << "; fi";
+            std::system(command.str().c_str());
             launched_python = false;
         }
     }
 
-    bool update(const std::vector<EventPoint> &latest_events,
-            double latest_ts,
-            hpecore::stampedPose &previous_skeleton)
+    ~EventPointPoseClient()
     {
-        if (latest_events.empty()) {
-            return false;
-        }
-
-        if (latest_ts < tic) {
-            tic = latest_ts - 2.0;
-            waiting = false;
-        }
-
-        bool sent = false;
-
-        if ((!waiting && latest_ts - tic >= period) || (latest_ts - tic > 2.0)) {
-            Bottle &b = output_port.prepare();
-            b.clear();
-
-            b.addFloat64(latest_ts);
-            Bottle &payload = b.addList();
-
-            for (const auto &e : latest_events) {
-                payload.addFloat64(e.x);
-                payload.addFloat64(e.y);
-                payload.addFloat64(e.t);
-                payload.addFloat64(e.p);
-            }
-
-            output_port.write();
-
-            tic = latest_ts;
-            waiting = true;
-            sent = true;
-        }
-
-        Bottle *mn_container = nullptr;
-
-        if (waiting) {
-            const double timeout_s = 5.0;
-            const double deadline = yarp::os::Time::now() + timeout_s;
-
-            while (yarp::os::Time::now() < deadline) {
-                mn_container = input_port.read(false);
-                if (mn_container) {
-                    break;
-                }
-                yarp::os::Time::delay(0.001);
-            }
-        }
-
-        if (mn_container) {
-            previous_skeleton.pose =
-                hpecore::extractSkeletonFromYARP<Bottle>(*mn_container);
-            previous_skeleton.conf =
-                hpecore::extractConfidenceFromYARP<Bottle>(*mn_container);
-            previous_skeleton.timestamp = tic;
-            previous_skeleton.delay = latest_ts - tic;
-            waiting = false;
-            return true;
-        }
-
-        if (sent) {
-            yWarning() << "No EventPointPose skeleton received before timeout at t =" << latest_ts;
-        }
-
-        return false;
+        close();
     }
-
-    // bool update(const std::vector<EventPoint> &latest_events, double latest_ts, hpecore::stampedPose &previous_skeleton)
-    // {
-    //     if (latest_events.empty()) {
-    //         return false;
-    //     }
-
-    //     if (latest_ts < tic) {
-    //         tic = latest_ts - 2.0;
-    //         waiting = false;
-    //     }
-
-    //     if ((!waiting && latest_ts - tic >= period) || (latest_ts - tic > 2.0)) {
-    //         Bottle &b = output_port.prepare();
-    //         b.clear();
-    //         b.addFloat64(latest_ts);
-    //         Bottle &payload = b.addList();
-    //         for (const auto &e : latest_events) {
-    //             payload.addFloat64(e.x);
-    //             payload.addFloat64(e.y);
-    //             payload.addFloat64(e.t);
-    //             payload.addFloat64(e.p);
-    //         }
-    //         output_port.write();
-    //         tic = latest_ts;
-    //         waiting = true;
-    //     }
-
-    //     Bottle *mn_container = input_port.read(false);
-    //     if (mn_container) {
-    //         previous_skeleton.pose = hpecore::extractSkeletonFromYARP<Bottle>(*mn_container);
-    //         previous_skeleton.conf = hpecore::extractConfidenceFromYARP<Bottle>(*mn_container);
-    //         previous_skeleton.timestamp = tic;
-    //         previous_skeleton.delay = latest_ts - tic;
-    //         waiting = false;
-    //     }
-
-    //     return mn_container != nullptr;
-    // }
 };
-
-// -----------------------------------------------------------------------------
-// Event window adapter for EventPointPose / RasEPC
-// -----------------------------------------------------------------------------
-// EventPointPose PointNet is trained on a fixed-size random sample taken AFTER
-// rasterization, not on a fixed number of raw events. For online single-camera
-// inference, the closest setting to the paper's LastLabel setup is a rolling
-// window of 7500 raw events, then RasEPC rasterization in Python, then random
-// sampling to 2048 rasterized points.
-//
-// This local event-driven loader exposes packet-level timestamps only through
-// iterator::timestamp(). If ev::AE has no per-event timestamp, packet timestamp
-// collapses many events into the same temporal slice. To avoid that, we send a
-// monotonic event-order timestamp. The Python sidecar normalizes timestamps
-// within each window, so only their relative order is needed for the 4 RasEPC
-// temporal slices.
-static bool readNextEventWindow(ev::offlineLoader<ev::AE> &eloader,
-                                double dt,
-                                std::size_t raw_events_per_window,
-                                std::vector<EventPoint> &events,
-                                double &tnow)
-{
-    static bool first_call = true;
-    static double next_ts = 0.0;
-    static std::deque<EventPoint> rolling_events;
-
-    if (raw_events_per_window == 0) {
-        raw_events_per_window = 2048;
-    }
-
-    if (first_call) {
-        first_call = false;
-        next_ts = dt;
-    } else {
-        next_ts += dt;
-    }
-
-    events.clear();
-
-    if (!eloader.incrementReadTill(next_ts)) {
-        return false;
-    }
-
-    std::size_t appended = 0;
-    for (auto it = eloader.begin(); it != eloader.end(); ++it) {
-        const ev::AE &ae = *it;
-
-        EventPoint e;
-        // Send zero-based sensor coordinates. The Python sidecar is called with
-        // --input_coord_base zero and will not subtract 1. This removes the
-        // unsafe min(x)>=1 auto-detection used previously.
-        e.x = static_cast<double>(ae.x);
-        e.y = static_cast<double>(ae.y);
-
-        const double packet_timestamp_seconds = it.timestamp();
-        e.t = packet_timestamp_seconds * 1e6;
-
-        // Keep polarity as 0/1. Python converts it to -1/+1 and accumulates
-        // pacc exactly as in the EventPointPose rasterizer.
-        e.p = (ae.p > 0) ? 1.0 : 0.0;
-
-        rolling_events.push_back(e);
-        ++appended;
-        // discarding the oldest events keeps the window size fixed and ensures that the most recent
-        while (rolling_events.size() > raw_events_per_window) {
-            rolling_events.pop_front();
-        }
-    }
-
-    tnow = next_ts;
-
-    // Warm up until the rolling LastLabel-style window is full. Returning true
-    // keeps the main loop advancing without sending an under-populated cloud.
-    if (rolling_events.size() < raw_events_per_window) {
-        return true;
-    }
-
-    events.assign(rolling_events.begin(), rolling_events.end());
-    return appended > 0 || !events.empty();
-}
 
 int main(int argc, char *argv[])
 {
-    yarp::os::ResourceFinder rf;
+    ResourceFinder rf;
     rf.setVerbose(false);
     rf.configure(argc, argv);
 
+    std::signal(SIGINT, handleTerminationSignal);
+    std::signal(SIGTERM, handleTerminationSignal);
+
     if (rf.check("help")) {
-        std::stringstream ss;
-        ss << "Usage: eventPointPose_offline [options]\n\n";
-        ss << std::left << std::setw(24) << "--data_file"       << std::setw(12) << "<string>" << ": path to event data.log\n";
-        ss << std::left << std::setw(24) << "--checkpoint_path" << std::setw(12) << "<string>" << ": path to EventPointPose PointNet model.pth\n";
-        ss << std::left << std::setw(24) << "--epp_script"      << std::setw(12) << "<string>" << ": path to eventPointPose_yarp_server.py\n";
-        ss << std::left << std::setw(24) << "--num_points"      << std::setw(12) << "<int>"    << ": sampled RasEPC points, default 2048\n";
-        ss << std::left << std::setw(24) << "--raw_events_per_window" << std::setw(12) << "<int>" << ": raw events before RasEPC, default 7500\n";
-        ss << std::left << std::setw(24) << "--net_period"      << std::setw(12) << "<double>" << ": model update period, default 0.05\n";
-        ss << std::left << std::setw(24) << "--output_period"   << std::setw(12) << "<double>" << ": CSV/vis period, default 0.005\n";
-        ss << std::left << std::setw(24) << "--w"               << std::setw(12) << "<int>"    << ": DHP19 sensor width, default 346\n";
-        ss << std::left << std::setw(24) << "--h"               << std::setw(12) << "<int>"    << ": DHP19 sensor height, default 260\n";
-        ss << std::left << std::setw(24) << "--device"          << std::setw(12) << "<string>" << ": PyTorch device, e.g. cpu/cuda:0\n";
-        ss << std::left << std::setw(24) << "--vis"             << std::setw(12) << ""         << ": enable visualization\n";
-        ss << std::left << std::setw(24) << "--output_csv"      << std::setw(12) << "<string>" << ": output CSV path\n";
-        ss << std::left << std::setw(24) << "--no_csv"          << std::setw(12) << ""         << ": skip CSV logging\n";
-        ss << std::left << std::setw(24) << "--output_video"    << std::setw(12) << "<string>" << ": output .mp4 path\n";
-        ss << std::left << std::setw(24) << "--no_video"        << std::setw(12) << ""         << ": disable video output\n";
-        ss << std::left << std::setw(24) << "--swap_lr"         << std::setw(12) << ""         << ": swap left/right joints\n";
-        yInfo() << ss.str();
+        std::stringstream help;
+        help << "Usage: EventPointPose_offline [options]\n\n";
+        help << std::left
+             << std::setw(30) << "--data_file <path>" << ": DHP19 ch2dvs/ch3dvs data.log\n"
+             << std::setw(30) << "--net_period <seconds>" << ": PointNet request period, default 0.05\n"
+             << std::setw(30) << "--output_period <seconds>" << ": held-pose CSV period, default 0.005\n"
+             << std::setw(30) << "--output_csv <path>" << ": output CSV, default /tmp/EventPointPose_output.csv\n"
+             << std::setw(30) << "--no_csv" << ": disable CSV output\n"
+             << std::setw(30) << "--camera <2|3>" << ": camera id; default inferred from data_file\n"
+             << std::setw(30) << "--model_path <path>" << ": PointNet MeanLabel checkpoint\n"
+             << std::setw(30) << "--EventPointPose_script <path>" << ": Python YARP sidecar (legacy: --eventPointPose_script)\n"
+             << std::setw(30) << "--device <cpu|cuda:N|N>" << ": inference device, default cuda:0\n"
+             << std::setw(30) << "--input_preprocessing <mode>" << ": already_filtered (default) or raw\n"
+             << std::setw(30) << "--background_domain <mode>" << ": global (default) or local; raw mode only\n"
+             << std::setw(30) << "--background_dt_us <value>" << ": raw background-filter dt, default 70000\n"
+             << std::setw(30) << "--hotpixel_path <path>" << ": .npy/.csv mask or containing directory; raw only\n"
+             << std::setw(30) << "--seed <int>" << ": deterministic sampling seed, default 1\n"
+             << std::setw(30) << "--fifo_size <int>" << ": persistent event FIFO, default 7500\n"
+             << std::setw(30) << "--num_points <int>" << ": post-RasEPC sample count, default 2048\n"
+             << std::setw(30) << "--response_timeout <seconds>" << ": 0 means blocking forever\n"
+             << std::setw(30) << "--startup_timeout <seconds>" << ": sidecar startup timeout, default 30\n"
+             << std::setw(30) << "--server_log <path>" << ": Python stdout/stderr log\n"
+             << std::setw(30) << "--server_verbose" << ": print every server request\n"
+             << std::setw(30) << "--dump_dir <path>" << ": optional NumPy validation dumps\n"
+             << std::setw(30) << "--dump_first_n <int>" << ": successful inferences to dump, default 1\n"
+             << std::setw(30) << "--server_event_port <name>" << ": override generated Python input port\n"
+             << std::setw(30) << "--server_skeleton_port <name>" << ": override generated Python output port\n";
+        yInfo() << help.str();
         return 0;
     }
 
-    const std::string datapath_file = rf.check("data_file", Value("/data/dhp19_testing_set_S13toS17/S13_1_1/ch3dvs/data.log")).asString();
-    const std::string checkpoint_path = rf.check("checkpoint_path", Value("/workspace/model_mounts/eventpointpose/PointNet/models/model.pth")).asString();
-    const std::string epp_script = rf.check("epp_script", Value("/workspace/model_mounts/eventpointpose/PointNet/models/eventPointPose_yarp_server.py")).asString();
-    const std::string device = rf.check("device", Value("")).asString();
-    const int num_points = rf.check("num_points", Value(2048)).asInt32();
-    const int raw_events_per_window = rf.check("raw_events_per_window", Value(7500)).asInt32();
-    const bool swap_lr = rf.check("swap_lr");
-
+    const std::string data_file = rf.check(
+        "data_file",
+        Value("/data/dhp19_testing_set_S13toS17/S13_1_1/ch2dvs/data.log")
+    ).asString();
+    const double net_period = rf.check("net_period", Value(0.05)).asFloat64();
     const double output_period = rf.check("output_period", Value(0.005)).asFloat64();
-    const double net_period = rf.check("net_period", Value(0.02)).asFloat64();
-    const cv::Size res(rf.check("w", Value(346)).asInt32(), rf.check("h", Value(260)).asInt32());
-    const bool is_visualize = rf.check("vis");
-    const std::string output_csv = rf.check("output_csv", Value("/tmp/eventpointpose_output.csv")).asString();
+    const std::string output_csv = rf.check(
+        "output_csv",
+        rf.check("output_file", Value("/tmp/EventPointPose_output.csv"))
+    ).asString();
     const bool no_csv = rf.check("no_csv");
-    std::string output_video = rf.check("output_video", Value("")).asString();
-    const bool no_video = rf.check("no_video");
-    
-    // For debugging: limit the number of processed event windows to avoid long runs on large datasets. Set max_packets to -1 to disable.
-    const int max_packets = rf.check("max_packets", Value(-1)).asInt32();
-    yInfo() << "max_packets set to" << max_packets;
 
-    PowerMonitor power_monitor;
-    PowerMonitorConfig power_cfg;
-    power_cfg.powerjoular_file = rf.check("pwrjlr_file", Value("")).asString();
-    power_cfg.gpu_file = rf.check("gpu_file", Value("/tmp/eventpointpose_gpu.csv")).asString();
-    power_cfg.gpu_period_ms = rf.check("gpu_period_ms", Value(5)).asInt32();
-    int gpu_monitor_index = rf.check("gpu_index", Value(0)).asInt32();
-
-    // If a device was specified (e.g. cuda:0), align the power monitor index to it
-    if (!device.empty()) {
-        std::string dev = device;
-        std::string dev_l = dev;
-        std::transform(dev_l.begin(), dev_l.end(), dev_l.begin(), ::tolower);
-        if (dev_l.rfind("cpu", 0) != 0) {
-            int parsed_gpu = 0;
-            size_t colon = dev.find(':');
-            if (colon != std::string::npos) {
-                std::string tail = dev.substr(colon + 1);
-                try { parsed_gpu = std::stoi(tail); } catch (...) { parsed_gpu = 0; }
-            } else if (!dev.empty() && std::all_of(dev.begin(), dev.end(), ::isdigit)) {
-                try { parsed_gpu = std::stoi(dev); } catch (...) { parsed_gpu = 0; }
-            }
-            gpu_monitor_index = parsed_gpu;
-        }
+    int camera = rf.check("camera", Value(-1)).asInt32();
+    if (camera < 0) {
+        camera = inferCameraFromPath(data_file);
     }
 
-    power_cfg.gpu_index = gpu_monitor_index;
-    power_cfg.target_pid = ::getpid();
-    if (!power_monitor.start(power_cfg)) {
+    const int width = rf.check("w", Value(346)).asInt32();
+    const int height = rf.check("h", Value(260)).asInt32();
+    const int fifo_size = rf.check("fifo_size", Value(7500)).asInt32();
+    const int num_points = rf.check("num_points", Value(2048)).asInt32();
+    const int seed = rf.check("seed", Value(1)).asInt32();
+
+    const std::string model_path = rf.check(
+        "model_path",
+        Value("/workspace/model_mounts/eventpointpose/PointNet/models/model.pth")
+    ).asString();
+    const std::string script_path = rf.check(
+        "EventPointPose_script",
+        rf.check(
+            "eventPointPose_script",
+            Value("/workspace/model_mounts/eventpointpose/PointNet/models/eventPointPose_yarp_server.py")
+        )
+    ).asString();
+    const std::string device = rf.check("device", Value("cuda:0")).asString();
+    const std::string input_preprocessing = rf.check(
+        "input_preprocessing", Value("already_filtered")
+    ).asString();
+    const std::string background_domain = rf.check(
+        "background_domain", Value("global")
+    ).asString();
+    const double background_dt_us = rf.check(
+        "background_dt_us", Value(70000.0)
+    ).asFloat64();
+    const std::string hotpixel_path = rf.check(
+        "hotpixel_path",
+        Value("/workspace/moveEnetFlow/experiments/ExpA/EPP_expA_accuracy_vs_network_period/dhp19_full_test/hotpixel_masks/S13_1_1/ch2dvs")
+    ).asString();
+
+    const double startup_timeout = rf.check(
+        "startup_timeout", Value(30.0)
+    ).asFloat64();
+    const double response_timeout = rf.check(
+        "response_timeout", Value(0.0)
+    ).asFloat64();
+    const std::string server_log = rf.check(
+        "server_log", Value(defaultServerLog())
+    ).asString();
+    const bool server_verbose = rf.check("server_verbose");
+    const std::string dump_dir = rf.check("dump_dir", Value("")).asString();
+    const int dump_first_n = rf.check("dump_first_n", Value(1)).asInt32();
+    const std::string server_event_port = rf.check(
+        "server_event_port", Value("")
+    ).asString();
+    const std::string server_skeleton_port = rf.check(
+        "server_skeleton_port", Value("")
+    ).asString();
+
+    if (!std::isfinite(net_period) || !std::isfinite(output_period) ||
+        net_period <= 0.0 || output_period <= 0.0) {
+        yError() << "--net_period and --output_period must be finite and positive.";
+        return -1;
+    }
+    if (camera != 2 && camera != 3) {
+        yError() << "Could not infer a supported camera. Use --camera 2 or --camera 3.";
+        return -1;
+    }
+    if (width != 346 || height != 260) {
+        yError() << "The PointNet MeanLabel checkpoint requires --w 346 --h 260.";
+        return -1;
+    }
+    if (fifo_size != 7500) {
+        yError() << "This online-style deployment requires --fifo_size 7500.";
+        return -1;
+    }
+    if (num_points != 2048) {
+        yError() << "The PointNet checkpoint requires --num_points 2048.";
+        return -1;
+    }
+    if (input_preprocessing != "already_filtered" && input_preprocessing != "raw") {
+        yError() << "--input_preprocessing must be already_filtered or raw.";
+        return -1;
+    }
+    if (background_domain != "global" && background_domain != "local") {
+        yError() << "--background_domain must be global or local.";
+        return -1;
+    }
+    if (input_preprocessing == "raw" && hotpixel_path.empty()) {
+        yError() << "Raw mode requires --hotpixel_path; an empty mask file is valid.";
+        return -1;
+    }
+    if (!std::isfinite(background_dt_us) || background_dt_us <= 0.0) {
+        yError() << "--background_dt_us must be finite and positive.";
+        return -1;
+    }
+    if (!std::isfinite(startup_timeout) || !std::isfinite(response_timeout) ||
+        startup_timeout <= 0.0 || response_timeout < 0.0) {
+        yError() << "Startup timeout must be positive and response timeout non-negative.";
         return -1;
     }
 
-    std::ofstream csv_file;
-    std::vector<std::string> csv_buffer;
-    VisualizationContext vis_ctx;
+    yInfo() << "Loading event log:" << data_file;
+    ev::offlineLoader<ev::AE> event_loader;
+    if (!event_loader.load(data_file)) {
+        yError() << "Could not load event data file:" << data_file;
+        return -1;
+    }
+    yInfo() << event_loader.getinfo();
+    yInfo() << "Camera:" << camera;
+    yInfo() << "PointNet period:" << net_period << "s (" << 1.0 / net_period << "Hz)";
+    yInfo() << "CSV period:" << output_period << "s (" << 1.0 / output_period << "Hz)";
+    yInfo() << "Input preprocessing:" << input_preprocessing;
+    if (input_preprocessing == "already_filtered") {
+        yInfo() << "Hot-pixel/background/IR filters will be skipped by the server.";
+    } else {
+        yInfo() << "Raw filter background domain:" << background_domain;
+    }
 
+    std::ofstream csv;
     if (!no_csv) {
-        csv_file.open(output_csv);
-        if (!csv_file.is_open()) {
-            yError() << "Could not open CSV file for writing:" << output_csv;
+        csv.open(output_csv);
+        if (!csv.is_open()) {
+            yError() << "Could not open CSV file:" << output_csv;
             return -1;
         }
-        csv_file << "timestamp,latency";
-        for (int j = 0; j < 13; ++j) {
-            csv_file << "," << CSV_JOINT_NAMES[j] << "_x," << CSV_JOINT_NAMES[j] << "_y";
+        writeCsvHeader(csv);
+        yInfo() << "CSV output:" << output_csv;
+    }
+
+    EventPointPoseClient client;
+    if (!client.init(
+            model_path,
+            script_path,
+            device,
+            camera,
+            width,
+            height,
+            fifo_size,
+            num_points,
+            seed,
+            input_preprocessing,
+            background_domain,
+            background_dt_us,
+            hotpixel_path,
+            dump_dir,
+            dump_first_n,
+            server_verbose,
+            startup_timeout,
+            response_timeout,
+            server_log,
+            server_event_port,
+            server_skeleton_port)) {
+        if (csv.is_open()) {
+            csv.close();
         }
-        csv_file << "\n";
-        csv_file.flush();
-    }
-
-    if (!initialiseVisualization(vis_ctx, res, is_visualize, no_video, output_video, datapath_file, output_period)) {
         return -1;
     }
 
-    ev::offlineLoader<ev::AE> eloader;
-    yInfo() << "Loading event data:" << datapath_file;
-    if (!eloader.load(datapath_file)) {
-        yError() << "Could not open event data file";
-        return -1;
-    }
-    yInfo() << eloader.getinfo();
+    std::vector<EventRecord> pending_batch;
+    pending_batch.reserve(16384);
 
-    if (!yarp::os::Network::checkNetwork()) {
-        yError() << "Could not connect to YARP";
-        return -1;
-    }
-
-    const std::string pointclouds_out = "/eventPointPose_offline/events:o_" + std::to_string(::getpid());
-    const std::string eventpointpose_in = "/eventPointPose_offline/sklt:i_" + std::to_string(::getpid());
-
-    eventPointPose_Detector epp_handler;
-    const double detF = 1.0 / net_period;
-    if (!epp_handler.init(pointclouds_out, eventpointpose_in, checkpoint_path, epp_script, detF, res, num_points, device, swap_lr)) {
-        yError() << "EventPointPose detector initialization failed";
-        return -1;
-    }
-
-    hpecore::stampedPose detected_pose;
-    hpecore::skeleton13 network_pose{};
+    PoseSample held_pose;
     bool pose_initialised = false;
+    bool schedules_initialised = false;
+    double next_inference_ts = 0.0;
+    double next_output_ts = 0.0;
 
-    double tnow = 0.0;
-    double next_csv_upd = output_period;
-    double next_vis_upd = output_period;
-    std::vector<EventPoint> event_window;
-    int packet_count = 0;
+    std::size_t packet_groups = 0;
+    std::size_t total_events = 0;
+    std::size_t request_count = 0;
+    std::size_t valid_inference_count = 0;
+    std::size_t warmup_count = 0;
+    std::size_t no_update_count = 0;
+    std::size_t server_error_count = 0;
+    std::size_t csv_rows = 0;
+    double first_inference_ts = -1.0;
+    double last_inference_ts = -1.0;
 
-    while (readNextEventWindow(eloader, net_period, static_cast<std::size_t>(std::max(1, raw_events_per_window)), event_window, tnow)) {
-        packet_count++;
+    auto emitOutput = [&](double output_timestamp) {
+        if (!pose_initialised || !csv.is_open()) {
+            return;
+        }
+        csv << std::fixed << std::setprecision(6)
+            << output_timestamp << "," << held_pose.latency;
+        for (int joint = 0; joint < kJointCount; ++joint) {
+            csv << "," << held_pose.joints[joint].x
+                << "," << held_pose.joints[joint].y;
+        }
+        csv << "\n";
+        ++csv_rows;
+    };
 
-        // For debugging: stop after a certain number of packets to avoid long runs on large datasets. Set max_packets to -1 to disable.
-        if (max_packets > 0 && packet_count > max_packets) {
-            yInfo() << "Reached max_packets limit of" << max_packets << ", stopping early.";
-            break;
+    int request_id = 0;
+    bool fatal_error = false;
+
+    auto processPacketGroup = [&](double current_timestamp,
+                                  const std::vector<EventRecord> &current_events) -> bool {
+        if (gStopRequested != 0) {
+            return true;
+        }
+        if (current_events.empty() || !std::isfinite(current_timestamp)) {
+            return true;
         }
 
-        if (event_window.empty()) {
-            continue;
+        ++packet_groups;
+        total_events += current_events.size();
+
+        if (!schedules_initialised) {
+            next_inference_ts = current_timestamp;
+            next_output_ts = current_timestamp;
+            schedules_initialised = true;
         }
 
-        const bool was_detected = epp_handler.update(event_window, tnow, detected_pose);
-        if (was_detected && hpecore::poseNonZero(detected_pose.pose)) {
-            network_pose = detected_pose.pose;
-            pose_initialised = true;
+        // Like YoloPose_offline: outputs strictly before the current packet use
+        // only the pose that was available before this packet/inference.
+        while (next_output_ts < current_timestamp - kTimeEpsilon) {
+            emitOutput(next_output_ts);
+            next_output_ts += output_period;
         }
 
-        if (tnow >= next_csv_upd) {
-            next_csv_upd += output_period;
-            if (pose_initialised && csv_file.is_open()) {
-                std::ostringstream row;
-                row << std::fixed << std::setprecision(6) << tnow;
-                // detected_pose.timestamp is the skeleton timestamp (tic), while tnow is the event window timestamp (toc). Latency is toc-tic, i.e. how old the skeleton prediction is at the current event window time.
-                const double lat = (detected_pose.timestamp > 0.0) ? detected_pose.delay : 0.0;
-                row << "," << lat;
-                for (int j = 0; j < 13; ++j) {
-                    const int hpe_idx = CSV_HPE_ORDER[j];
-                    row << "," << network_pose[hpe_idx].u << "," << network_pose[hpe_idx].v;
+        pending_batch.insert(
+            pending_batch.end(), current_events.begin(), current_events.end()
+        );
+
+        // At most one request is executed for each available packet timestamp.
+        // Missed absolute deadlines are skipped by advancing the schedule after
+        // the request, exactly as in the agreed YOLO-style offline semantics.
+        if (current_timestamp + kTimeEpsilon >= next_inference_ts) {
+            if (request_count == 0) {
+                first_inference_ts = current_timestamp;
+            }
+            last_inference_ts = current_timestamp;
+            ++request_count;
+
+            ServerReply reply = client.infer(
+                pending_batch, current_timestamp, camera, request_id++
+            );
+
+            if (!reply.transport_ok) {
+                yError() << "EventPointPose request failed:" << reply.status
+                         << reply.message;
+                return false;
+            }
+
+            // The server has consumed the batch for every valid protocol
+            // response, including WARMUP, NO_UPDATE, and ERROR.
+            pending_batch.clear();
+
+            if (reply.has_pose && reply.status == "OK") {
+                held_pose = reply.pose;
+                pose_initialised = true;
+                ++valid_inference_count;
+            } else if (reply.status == "WARMUP") {
+                ++warmup_count;
+                yInfo() << "EventPointPose warm-up: FIFO" << reply.fifo_size
+                        << "/" << fifo_size;
+            } else if (reply.status == "NO_UPDATE") {
+                ++no_update_count;
+            } else if (reply.status == "ERROR") {
+                ++server_error_count;
+                yWarning() << "EventPointPose server returned ERROR:"
+                           << reply.message;
+            } else {
+                yWarning() << "EventPointPose returned status" << reply.status
+                           << reply.message;
+            }
+
+            do {
+                next_inference_ts += net_period;
+            } while (next_inference_ts <= current_timestamp + kTimeEpsilon);
+        }
+
+        // Outputs coincident with the packet timestamp are generated after the
+        // possible inference, so a new prediction is valid from its own time.
+        while (next_output_ts <= current_timestamp + kTimeEpsilon) {
+            emitOutput(next_output_ts);
+            next_output_ts += output_period;
+        }
+
+        return true;
+    };
+
+    // Load one iterator window spanning the complete file. The iterator keeps
+    // the packet envelope timestamp and updates it when crossing packet
+    // boundaries, so this avoids guessing the next packet time or stepping in
+    // artificial microsecond increments.
+    if (!event_loader.incrementReadTill(std::numeric_limits<double>::max())) {
+        yError() << "Could not expose events from the loaded data.log.";
+        fatal_error = true;
+    } else if (event_loader.begin() == event_loader.end()) {
+        yError() << "The loaded data.log contains no events.";
+        fatal_error = true;
+    } else {
+        std::vector<EventRecord> current_events;
+        current_events.reserve(4096);
+        double current_timestamp = std::numeric_limits<double>::quiet_NaN();
+
+        for (ev::offlineLoader<ev::AE>::iterator event = event_loader.begin();
+             event != event_loader.end() && gStopRequested == 0;
+             event++) {
+            const double packet_timestamp = event.timestamp();
+
+            if (!std::isfinite(current_timestamp)) {
+                current_timestamp = packet_timestamp;
+            } else if (packet_timestamp != current_timestamp) {
+                if (!processPacketGroup(current_timestamp, current_events)) {
+                    fatal_error = true;
+                    break;
                 }
-                csv_buffer.push_back(row.str());
-                //printf("%s\n", row.str().c_str());
+                current_events.clear();
+                current_timestamp = packet_timestamp;
             }
+
+            EventRecord record;
+            record.x = static_cast<int>(event->x);
+            record.y = static_cast<int>(event->y);
+            record.polarity = static_cast<int>(event->p);
+            record.packet_timestamp = packet_timestamp;
+            current_events.push_back(record);
         }
 
-        if ((is_visualize || (!output_video.empty() && !no_video)) && tnow >= next_vis_upd) {
-            next_vis_upd += output_period;
-
-            cv::Mat frame = eventsToFrame(event_window, res);
-
-            renderVisualizationFrameEPP(vis_ctx, frame, pose_initialised, network_pose, detected_pose, tnow);
-            writeVisualizationFrame(vis_ctx, pose_initialised);
-            if (showVisualizationFrame(vis_ctx)) {
-                yInfo() << "User requested stop";
-                break;
+        if (!fatal_error && gStopRequested == 0 && !current_events.empty()) {
+            if (!processPacketGroup(current_timestamp, current_events)) {
+                fatal_error = true;
             }
         }
     }
 
-    yInfo() << "End of event stream after" << packet_count << "event windows.";
-
-    if (csv_file.is_open()) {
-        for (const auto &line : csv_buffer) {
-            csv_file << line << "\n";
-        }
-        csv_file.close();
-        yInfo() << "CSV rows written:" << csv_buffer.size() << "->" << output_csv;
+    if (csv.is_open()) {
+        csv.flush();
+        csv.close();
     }
 
-    power_monitor.stop();
-    epp_handler.close();
-    closeVisualization(vis_ctx, output_video);
-    return 0;
+    client.close();
+
+    yInfo() << "Packet groups processed:" << packet_groups;
+    yInfo() << "Events read:" << total_events;
+    yInfo() << "PointNet requests:" << request_count;
+    yInfo() << "Valid PointNet inferences:" << valid_inference_count;
+    yInfo() << "Warm-up responses:" << warmup_count;
+    yInfo() << "NO_UPDATE responses:" << no_update_count;
+    yInfo() << "Server ERROR responses:" << server_error_count;
+    yInfo() << "CSV rows written:" << csv_rows;
+    yInfo() << "Python server log:" << server_log;
+
+    if (request_count > 1 && last_inference_ts > first_inference_ts) {
+        const double observed_rate = static_cast<double>(request_count - 1) /
+            (last_inference_ts - first_inference_ts);
+        yInfo() << "Requested inference rate:" << 1.0 / net_period << "Hz";
+        yInfo() << "Observed inference rate:" << observed_rate << "Hz";
+    }
+
+    if (gStopRequested != 0) {
+        yInfo() << "Termination signal received; EventPointPose replay stopped.";
+        return 130;
+    }
+    return fatal_error ? -1 : 0;
 }
