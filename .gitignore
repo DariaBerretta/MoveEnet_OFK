@@ -26,7 +26,6 @@ moveEnetFlow/nni_experiments
 moveEnetFlow/power_experiments 
 moveEnetFlow/video_slides 
 moveEnetFlow/other_version 
-/model_mounts/ 
 epp_video.mp4 
 video.mp4 
 docker/.env 
@@ -44,9 +43,11 @@ docker/.env
 
 /model_mounts/**
 !/model_mounts/**/
-!/model_mounts/**/*.py
 !/model_mounts/**/*.pth
+!/model_mounts/**/*.py 
+!/model_mounts/**/*.pt
 !/model_mounts/OpenPose/pose_iter_584000.caffemodel
+/model_mounts/eventpointpose/PointNet/models/old_server/
 
 /moveEnetFlow/old_script_version/**
 
