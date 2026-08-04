@@ -1,6 +1,9 @@
+name: moveenet_ofk
+
 services:
   moveEnet_flow:
-    container_name: moveEnet_flow
+    container_name: moveEnetOFK
+    init: true                                 # Use init process to handle zombie processes
     image: hpe
     build: .                                    # Use Dockerfile in current directory
     network_mode: host                          # Use host networking
