@@ -1,4 +1,4 @@
 {
     "python-envs.defaultEnvManager": "ms-python.python:venv",
-    "cmake.sourceDirectory": "/home/moveEnetFlow"
+    "cmake.sourceDirectory": "/workspace/moveEnetFlow"
 }
