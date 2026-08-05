@@ -76,9 +76,10 @@ RUN cd $SOURCE_FOLDER && \
     cd hpe-core/core && mkdir build && cd build && \
     cmake .. && make install -j$(nproc)
 
-RUN python3 -m pip install -r $SOURCE_FOLDER/hpe-core/example/movenet/requirements.txt
-# RUN /opt/venv/bin/python -m pip install --upgrade pip setuptools wheel && \
-#    /opt/venv/bin/python -m pip install -r $SOURCE_FOLDER/hpe-core/example/movenet/requirements.txt
+# RUN python3 -m pip install -r $SOURCE_FOLDER/hpe-core/example/movenet/requirements.txt
+RUN /opt/venv/bin/python -m pip install --upgrade pip setuptools wheel && \
+    /opt/venv/bin/python -m pip install --no-cache-dir \
+        -r $SOURCE_FOLDER/hpe-core/example/movenet/requirements.txt 
 ENV PYTHONPATH "${PYTHONPATH}:$SOURCE_FOLDER/hpe-core"
     
 RUN cd $SOURCE_FOLDER && \
@@ -112,6 +113,10 @@ RUN cd $SOURCE_FOLDER && \
           .. && \
     make -j$(nproc) && \
     make install
+
+# Python dependency required by YoloPose_yarp_server.py
+RUN /opt/venv/bin/python -m pip install --no-cache-dir \
+    "ultralytics==8.4.102"
 
 RUN apt autoremove && apt clean
 RUN rm -rf /tmp/* /var/lib/apt/lists/* /var/tmp/*
