@@ -20,15 +20,6 @@ include_directories(
     ${GFLAGS_INCLUDE_DIR}
 )
 
-# Build moveEnet_flow executable (offline HPE)
-# add_executable(moveEnet_flow moveEnet_flow.cpp)
-# target_link_libraries(moveEnet_flow
-#     ${YARP_LIBRARIES}
-#     ${OpenCV_LIBS}
-#     ev::event-driven
-#     hpe-core::hpe-core
-# )
-
 # Build async no-idle Kalman pipeline
 add_executable(moveEnetOFK_offline
     moveEnetOFK_offline.cpp
@@ -102,59 +93,18 @@ target_link_libraries(eventPointPose_offline
     hpe-core::hpe-core
 )
 
-add_executable(eventPointPose_offline_no_rolling
-    eventPointPose_offline_no_rolling.cpp
-    utils/power_monitor.cpp
-    utils/visualization_utils.cpp
-    utils/device_utils.cpp
-)
-
-target_link_libraries(eventPointPose_offline_no_rolling
-    ${YARP_LIBRARIES}
-    ${OpenCV_LIBS}
-    ev::event-driven
-    hpe-core::hpe-core
-)
-
-add_executable(eventPointPose_hotpixel_mask
-    eventPointPose_hotpixel_mask.cpp
-    utils/power_monitor.cpp
-    utils/visualization_utils.cpp
-    utils/device_utils.cpp
-)
-
-target_link_libraries(eventPointPose_hotpixel_mask
-    ${YARP_LIBRARIES}
-    ${OpenCV_LIBS}
-    ev::event-driven
-    hpe-core::hpe-core
-)
-
-#add_executable(eventPointPose_offline_preprocessed
-#    eventPointPose_offline_preprocessed.cpp
+# add_executable(eventPointPose_offline_no_rolling
+#    eventPointPose_offline_no_rolling.cpp
 #    utils/power_monitor.cpp
 #    utils/visualization_utils.cpp
-#)
+#    utils/device_utils.cpp
+# )
 
-#target_link_libraries(eventPointPose_offline_preprocessed
+# target_link_libraries(eventPointPose_offline_no_rolling
 #    ${YARP_LIBRARIES}
 #    ${OpenCV_LIBS}
 #    ev::event-driven
 #    hpe-core::hpe-core
-#)
+# )
 
-# add_executable(moveEnetOFK_offline_power
-#     power_experiments/moveEnetOFK_offline_power.cpp
-#     power_experiments/power_pipeline_monitor.cpp
-#     utils/visualization_utils.cpp
-# )
-# target_include_directories(moveEnetOFK_offline_power PRIVATE
-#     ${CMAKE_CURRENT_SOURCE_DIR}
-#     ${CMAKE_CURRENT_SOURCE_DIR}/power_experiments
-# )
-# target_link_libraries(moveEnetOFK_offline_power
-#     ${YARP_LIBRARIES}
-#     ${OpenCV_LIBS}
-#     ev::event-driven
-#     hpe-core::hpe-core
-# )
+
