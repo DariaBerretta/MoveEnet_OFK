@@ -1,5 +1,6 @@
-.venv/ 
-/opt/venv/ 
+.venv/
+/opt/venv/
+.vscode/
 hpeV2-gnn/lightning_logs/ 
 *.pyc 
 *.pyo __pycache__/ 
