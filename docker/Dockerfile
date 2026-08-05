@@ -114,6 +114,17 @@ RUN cd $SOURCE_FOLDER && \
     make -j$(nproc) && \
     make install
 
+ARG OPENPOSE_MODEL_REVISION=f4a22b0e6fa2a4a2b1e2d50bd589e8bb11ebea7c
+ARG OPENPOSE_MODEL_SHA256=44e3d7ebd8c8b62d4366d67127f1b562611a9e8fd0f4f3cdeeb4bb4a6ed12be6
+
+RUN MODEL_DIR=/usr/local/src/openpose/models/pose/body_25 && \
+    MODEL_FILE="${MODEL_DIR}/pose_iter_584000.caffemodel" && \
+    mkdir -p "${MODEL_DIR}" && \
+    curl --location --fail --show-error --retry 3 \
+      "https://huggingface.co/camenduru/openpose/resolve/${OPENPOSE_MODEL_REVISION}/pose_iter_584000.caffemodel?download=true" \
+      --output "${MODEL_FILE}" && \
+    echo "${OPENPOSE_MODEL_SHA256}  ${MODEL_FILE}" | sha256sum --check -
+
 # Python dependency required by YoloPose_yarp_server.py
 RUN /opt/venv/bin/python -m pip install --no-cache-dir \
     "ultralytics==8.4.102"
