@@ -5,6 +5,7 @@ set -euo pipefail
 # MOVENET_PROFILE=expA|expB (the public scripts set it for you).
 EXPERIMENTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PROFILE="${MOVENET_PROFILE:-expA}"
+RESULTS_ROOT="${MOVENET_RESULTS_ROOT:-/data/MovEnet_OFK_results}"
 
 # -----------------------------------------------------------------------------
 # How to run:
@@ -165,8 +166,8 @@ case "$DATASET" in
   eh36m)
     DATA_ROOT="${DATA_ROOT:-/data/eh36m_testing_set_S9S11/events}"
     CHECKPOINT_PATH="${CHECKPOINT_PATH:-/usr/local/src/hpe-core/example/movenet/models/e97_valacc0.81209.pth}"
-    RAW_DIR="${RAW_DIR:-$EXP_DIR/eh36m_full_test/results/raw}"
-    LOG_DIR="${LOG_DIR:-$EXP_DIR/eh36m_full_test/results/logs}"
+    RAW_DIR="${RAW_DIR:-$RESULTS_ROOT/MOFK_eh36m_full_test/results/raw}"
+    LOG_DIR="${LOG_DIR:-$RESULTS_ROOT/MOFK_eh36m_full_test/results/logs}"
     IMG_W="${IMG_W:-640}"
     IMG_H="${IMG_H:-480}"
     DATA_GLOB="${DATA_GLOB:-*/ch0dvs/data.log}"
@@ -176,8 +177,8 @@ case "$DATASET" in
   dhp19)
     DATA_ROOT="${DATA_ROOT:-/data/dhp19_testing_set_S13toS17}"
     CHECKPOINT_PATH="${CHECKPOINT_PATH:-/usr/local/src/hpe-core/example/movenet/models/dhp19_allcams_e33_valacc0.87996.pth}"
-    RAW_DIR="${RAW_DIR:-$EXP_DIR/dhp19_full_test/results/raw}"
-    LOG_DIR="${LOG_DIR:-$EXP_DIR/dhp19_full_test/results/logs}"
+    RAW_DIR="${RAW_DIR:-$RESULTS_ROOT/MOFK_dhp19_full_test/results/raw}"
+    LOG_DIR="${LOG_DIR:-$RESULTS_ROOT/MOFK_dhp19_full_test/results/logs}"
     IMG_W="${IMG_W:-346}"
     IMG_H="${IMG_H:-260}"
     DATA_GLOB="${DATA_GLOB:-*/ch*dvs/data.log}"

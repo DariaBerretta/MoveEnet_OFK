@@ -3,14 +3,15 @@ set -euo pipefail
 
 # Shared RGB-pose batch runner. POSE_METHOD=openpose|yolo selects the binary.
 EXPERIMENTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+RESULTS_ROOT="${MOVENET_RESULTS_ROOT:-/data/MovEnet_OFK_results}"
 POSE_METHOD="${POSE_METHOD:-openpose}"
 case "$POSE_METHOD" in
-  openpose) EXP_DIR="$EXPERIMENTS_DIR/ExpA/OP_expA_accuracy_vs_network_period"; BINARY="/workspace/moveEnetFlow/build/OpenPose_offline" ;;
-  yolo) EXP_DIR="$EXPERIMENTS_DIR/ExpA/YOLO_expA_accuracy_vs_network_period"; BINARY="/workspace/moveEnetFlow/build/YoloPose_offline" ;;
+  openpose) EXP_DIR="$EXPERIMENTS_DIR/ExpA/OP_expA_accuracy_vs_network_period"; RESULT_DIR="$RESULTS_ROOT/OP_h36m_full_test"; BINARY="/workspace/moveEnetFlow/build/OpenPose_offline" ;;
+  yolo) EXP_DIR="$EXPERIMENTS_DIR/ExpA/YOLO_expA_accuracy_vs_network_period"; RESULT_DIR="$RESULTS_ROOT/YOLO_h36m_full_test"; BINARY="/workspace/moveEnetFlow/build/YoloPose_offline" ;;
   *) echo "Unknown POSE_METHOD: $POSE_METHOD" >&2; exit 2 ;;
 esac
-RAW_DIR="$EXP_DIR/h36m_full_test/results/raw"                                    # Output directory for raw CSV results
-MP4_DIR="$EXP_DIR/h36m_full_test/results/logs"                                   # Output directory for execution logs
+RAW_DIR="$RESULT_DIR/results/raw"                                    # Output directory for raw CSV results
+MP4_DIR="$RESULT_DIR/results/logs"                                   # Output directory for execution logs
 
 # Network periods to test (seconds) — corresponds to detection rates: 100Hz, 50Hz, 20Hz, 10Hz, 5Hz, 2Hz
 # Network periods in seconds: 100 Hz, 50 Hz, 20 Hz, 10 Hz, 5 Hz, 2 Hz
@@ -38,6 +39,8 @@ Options:
   --net_period <float>       Run a single network period
   --data_root <path>         Dataset root containing .mp4 sequences
   --data_file <path>         Optional single .mp4 file override
+  --raw_dir <path>           Output directory for raw CSV results
+  --log_dir <path>           Output directory for execution logs
   --output_period <float>    CSV output period (default: 0.02)
   --w <int>                  Image width (default: 640)
   --h <int>                  Image height (default: 480)
@@ -51,6 +54,8 @@ while [[ $# -gt 0 ]]; do
     --binary) BINARY="$2"; shift 2 ;;
     --data_root) DATA_ROOT="$2"; shift 2 ;;
     --data_file) DATA_FILE="$2"; shift 2 ;;
+    --raw_dir) RAW_DIR="$2"; shift 2 ;;
+    --log_dir) MP4_DIR="$2"; shift 2 ;;
     --periods) IFS=',' read -r -a PERIODS <<< "$2"; shift 2 ;;
     --net_period) PERIODS=("$2"); shift 2 ;;
     --output_period) OUTPUT_PERIOD="$2"; shift 2 ;;

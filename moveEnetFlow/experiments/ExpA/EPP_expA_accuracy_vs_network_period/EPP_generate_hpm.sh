@@ -15,6 +15,8 @@ set -euo pipefail
 #   MASK_ROOT/S13_1_1/ch3dvs/hotpixel_pixels.csv
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RESULTS_ROOT="${MOVENET_RESULTS_ROOT:-/data/MovEnet_OFK_results}"
+RESULT_DIR="$RESULTS_ROOT/EPP_dhp19_full_test"
 
 # -----------------------------------------------------------------------------
 # Defaults; every value can be overridden from the command line.
@@ -25,8 +27,8 @@ DATA_FILE=""                                      # optional single data.log
 DATA_ROOT="/data/dhp19_testing_set_S13toS17"
 DATA_GLOB="*/ch[23]dvs/data.log"                  # cam2 and cam3 only
 
-MASK_ROOT="$SCRIPT_DIR/dhp19_full_test/hotpixel_masks"
-LOG_DIR="$SCRIPT_DIR/dhp19_full_test/hotpixel_mask_logs"
+MASK_ROOT="$RESULT_DIR/hotpixel_masks"
+LOG_DIR="$RESULT_DIR/hotpixel_mask_logs"
 
 THRESHOLD="10000"
 IMG_W="346"

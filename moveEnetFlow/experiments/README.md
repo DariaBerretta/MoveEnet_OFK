@@ -14,5 +14,10 @@ The public scripts stay beside each experiment; they are compatibility wrappers.
 `ExperimentA_Joint_MPJPE_Comparison.ipynb` is retained because it adds joint-level metrics; it is not a duplicate of the selectable method comparison.
 
 Each retained notebook is the complete, current analysis for its experiment. Historical and single-metric copies were removed.
+All experiment runners write their CSV files below
+`/data/MovEnet_OFK_results` by default, using the dataset folders expected by the analysis notebooks
+layout. Set `MOVENET_RESULTS_ROOT` to change the common root, or use a runner's
+`--raw_dir`, `--log_dir`, `--output_dir`, or `--mask_root` option for a
+one-off override.
 
 For EventPointPose, `EPP_video.sh` is the current rolling-FIFO video workflow. `EPP_video_no_rolling.sh` is intentionally separate for the no-rolling ablation; `EPP_video_v2.sh` is a compatibility alias.

@@ -2,6 +2,7 @@
 .projVenv/
 /opt/venv/
 .vscode/
+.nbvenv/
 hpeV2-gnn/lightning_logs/ 
 *.pyc 
 *.pyo __pycache__/ 

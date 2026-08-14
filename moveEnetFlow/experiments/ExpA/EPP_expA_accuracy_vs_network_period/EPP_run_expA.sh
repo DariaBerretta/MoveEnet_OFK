@@ -19,6 +19,8 @@ set -Eeuo pipefail
 # notebooks and directory conventions do not need to change.
 
 EXP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RESULTS_ROOT="${MOVENET_RESULTS_ROOT:-/data/MovEnet_OFK_results}"
+RESULT_DIR="$RESULTS_ROOT/EPP_dhp19_full_test"
 
 # -----------------------------------------------------------------------------
 # Defaults
@@ -32,8 +34,8 @@ DATA_GLOB="*/ch[23]dvs/data.log"
 MODEL_PATH="/workspace/model_mounts/eventpointpose/PointNet/models/model.pth"
 EPP_SCRIPT="/workspace/model_mounts/eventpointpose/PointNet/models/eventPointPose_yarp_server.py"
 
-RAW_DIR="$EXP_DIR/dhp19_full_test/results/raw"
-LOG_DIR="$EXP_DIR/dhp19_full_test/results/logs"
+RAW_DIR="$RESULT_DIR/results/raw"
+LOG_DIR="$RESULT_DIR/results/logs"
 DUMP_ROOT=""
 
 # 100, 50, 20, 10, 5 and 2 Hz.
