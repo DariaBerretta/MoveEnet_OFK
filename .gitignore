@@ -1,4 +1,5 @@
 .venv/
+.projVenv/
 /opt/venv/
 .vscode/
 hpeV2-gnn/lightning_logs/ 

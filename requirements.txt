@@ -1,3 +1,5 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch
 pytorch_lightning
 torch_geometric
 git+https://github.com/event-driven-robotics/bimvee@2.0
@@ -6,3 +8,13 @@ albumentations
 torchvision
 tensorboard
 pandas
+scipy
+matplotlib
+seaborn
+jupyterlab
+ipykernel
+opencv-python
+ultralytics==8.4.102
+torchsummary
+onnxruntime
+tabulate
