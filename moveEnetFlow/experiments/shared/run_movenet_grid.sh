@@ -5,7 +5,7 @@ set -euo pipefail
 # MOVENET_PROFILE=expA|expB (the public scripts set it for you).
 EXPERIMENTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PROFILE="${MOVENET_PROFILE:-expA}"
-RESULTS_ROOT="${MOVENET_RESULTS_ROOT:-/data/MovEnet_OFK_results}"
+RESULTS_ROOT="${MOVENET_RESULTS_ROOT:-/data/MoveEnet_OFK_results}"
 
 # -----------------------------------------------------------------------------
 # How to run:

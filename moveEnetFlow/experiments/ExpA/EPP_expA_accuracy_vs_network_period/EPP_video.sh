@@ -31,7 +31,7 @@ MODEL_PATH="/workspace/model_mounts/eventpointpose/PointNet/models/model.pth"
 EPP_SCRIPT="/workspace/model_mounts/eventpointpose/PointNet/models/eventPointPose_yarp_server.py"
 UPSTREAM_REPO=""
 
-RESULTS_ROOT="${MOVENET_RESULTS_ROOT:-/data/MovEnet_OFK_results}"
+RESULTS_ROOT="${MOVENET_RESULTS_ROOT:-/data/MoveEnet_OFK_results}"
 OUTPUT_DIR="$RESULTS_ROOT/EPP_dhp19_full_test/videos/rolling"
 NET_PERIOD="0.02"
 OUTPUT_PERIOD="0.005"

@@ -20,7 +20,7 @@ set -euo pipefail
 # The script is headless: it writes MP4 files without opening an OpenCV window.
 
 POSE_METHOD="${POSE_METHOD:-openpose}"
-RESULTS_ROOT="${MOVENET_RESULTS_ROOT:-/data/MovEnet_OFK_results}"
+RESULTS_ROOT="${MOVENET_RESULTS_ROOT:-/data/MoveEnet_OFK_results}"
 case "$POSE_METHOD" in
   openpose)
     POSE_LABEL="OpenPose"

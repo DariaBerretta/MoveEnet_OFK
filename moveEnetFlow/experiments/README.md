@@ -15,7 +15,7 @@ The public scripts stay beside each experiment; they are compatibility wrappers.
 
 Each retained notebook is the complete, current analysis for its experiment. Historical and single-metric copies were removed.
 All experiment runners write their CSV files below
-`/data/MovEnet_OFK_results` by default, using the dataset folders expected by the analysis notebooks
+`/data/MoveEnet_OFK_results` by default, using the dataset folders expected by the analysis notebooks
 layout. Set `MOVENET_RESULTS_ROOT` to change the common root, or use a runner's
 `--raw_dir`, `--log_dir`, `--output_dir`, or `--mask_root` option for a
 one-off override.

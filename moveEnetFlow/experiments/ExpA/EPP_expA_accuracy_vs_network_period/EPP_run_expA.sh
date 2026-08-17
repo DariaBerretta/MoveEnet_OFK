@@ -19,7 +19,7 @@ set -Eeuo pipefail
 # notebooks and directory conventions do not need to change.
 
 EXP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-RESULTS_ROOT="${MOVENET_RESULTS_ROOT:-/data/MovEnet_OFK_results}"
+RESULTS_ROOT="${MOVENET_RESULTS_ROOT:-/data/MoveEnet_OFK_results}"
 RESULT_DIR="$RESULTS_ROOT/EPP_dhp19_full_test"
 
 # -----------------------------------------------------------------------------

@@ -8,7 +8,7 @@ set -euo pipefail
 
 DATASET="dhp19"
 BINARY="/workspace/moveEnetFlow/build2/moveEnetOFK_offline"
-RESULTS_ROOT="${MOVENET_RESULTS_ROOT:-/data/MovEnet_OFK_results}"
+RESULTS_ROOT="${MOVENET_RESULTS_ROOT:-/data/MoveEnet_OFK_results}"
 
 # Empty values are filled by the selected dataset preset after argument parsing.
 DATA_ROOT=""

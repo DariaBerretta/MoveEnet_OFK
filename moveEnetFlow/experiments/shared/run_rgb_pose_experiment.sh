@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Shared RGB-pose batch runner. POSE_METHOD=openpose|yolo selects the binary.
 EXPERIMENTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-RESULTS_ROOT="${MOVENET_RESULTS_ROOT:-/data/MovEnet_OFK_results}"
+RESULTS_ROOT="${MOVENET_RESULTS_ROOT:-/data/MoveEnet_OFK_results}"
 POSE_METHOD="${POSE_METHOD:-openpose}"
 case "$POSE_METHOD" in
   openpose) EXP_DIR="$EXPERIMENTS_DIR/ExpA/OP_expA_accuracy_vs_network_period"; RESULT_DIR="$RESULTS_ROOT/OP_h36m_full_test"; BINARY="/workspace/moveEnetFlow/build/OpenPose_offline" ;;
