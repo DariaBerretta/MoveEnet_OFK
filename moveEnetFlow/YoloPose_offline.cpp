@@ -27,6 +27,8 @@
 #include <algorithm>
 #include <cctype>
 #include <cstddef>
+#include <chrono>
+#include <limits>
 
 #include "utils/power_monitor.h"
 #include "utils/visualization_utils.h"
@@ -211,14 +213,21 @@ public:
     // Execute exactly one blocking YOLO inference for latest_image.
     // Rate limiting is deliberately handled by main(), using video timestamps.
     bool infer(const cv::Mat &latest_image,
-               double frame_ts,
-               hpecore::stampedPose &detected_skeleton)
+           double frame_ts,
+           hpecore::stampedPose &detected_skeleton,
+           bool &response_received)
     {
+        response_received = false;
+        detected_skeleton.delay =
+            std::numeric_limits<double>::quiet_NaN();
+
         if (latest_image.empty()) {
             return false;
         }
 
+        // ===== PREPROCESSING: excluded from latency =====
         cv::Mat gray;
+
         if (latest_image.channels() == 3) {
             cv::cvtColor(latest_image, gray, cv::COLOR_BGR2GRAY);
         } else if (latest_image.channels() == 4) {
@@ -236,28 +245,54 @@ public:
         ImageOf<PixelMono> &out_img = output_port.prepare();
         out_img.copy(yarp::cv::fromCvMat<PixelMono>(gray));
 
-        const double wall_start = yarp::os::Time::now();
+        // ===== LATENCY START =====
+        const auto request_start =
+            std::chrono::steady_clock::now();
+
         output_port.write();
 
-        // One request is outstanding, therefore the received Bottle belongs
-        // to the frame that was just sent.
         Bottle *mn_container = input_port.read(true);
+
         if (!mn_container) {
+            const auto request_end =
+                std::chrono::steady_clock::now();
+
+            detected_skeleton.delay =
+                std::chrono::duration<double>(
+                    request_end - request_start
+                ).count();
+
+            detected_skeleton.timestamp = frame_ts;
+
             return false;
         }
 
-        detected_skeleton.pose =
-            hpecore::extractSkeletonFromYARP<Bottle>(*mn_container);
-        detected_skeleton.conf =
-            hpecore::extractConfidenceFromYARP<Bottle>(*mn_container);
+        response_received = true;
 
-        // Timestamp of the video frame used for this inference.
+        detected_skeleton.pose =
+            hpecore::extractSkeletonFromYARP<Bottle>(
+                *mn_container
+            );
+
+        detected_skeleton.conf =
+            hpecore::extractConfidenceFromYARP<Bottle>(
+                *mn_container
+            );
+
         detected_skeleton.timestamp = frame_ts;
 
-        // Real wall-clock processing latency of this YOLO inference.
-        detected_skeleton.delay = yarp::os::Time::now() - wall_start;
+        // ===== LATENCY END =====
+        const auto request_end =
+            std::chrono::steady_clock::now();
 
-        return hpecore::poseNonZero(detected_skeleton.pose);
+        detected_skeleton.delay =
+            std::chrono::duration<double>(
+                request_end - request_start
+            ).count();
+
+        return hpecore::poseNonZero(
+            detected_skeleton.pose
+        );
     }
 };
 
@@ -283,6 +318,7 @@ int main(int argc, char *argv[])
         ss << std::left << std::setw(24) << "--no_video"        << std::setw(12) << ""         << ": disable video output\n";
         ss << std::left << std::setw(24) << "--yolo_model_path" << std::setw(12) << "<string>" << ": path to yolo26n-pose.pt\n";
         ss << std::left << std::setw(24) << "--YoloPose_script" << std::setw(12) << "<string>" << ": path to YoloPose_yarp_server.py\n";
+        ss << std::left << std::setw(24) << "--latency_csv"     << std::setw(12) << "<string>" << ": per-inference latency CSV\n";
         ss << std::left << std::setw(24) << "--pwrjlr_file"     << std::setw(12) << "<string>" << ": base path for PowerJoular output\n";
         ss << std::left << std::setw(24) << "--gpu_file"        << std::setw(12) << "<string>" << ": output CSV for GPU telemetry\n";
         ss << std::left << std::setw(24) << "--gpu_period_ms"   << std::setw(12) << "<int>"    << ": nvidia-smi sampling period in ms\n";
@@ -344,13 +380,17 @@ int main(int argc, char *argv[])
         "YoloPose_script",
         Value("/workspace/model_mounts/YoloPose/YoloPose_yarp_server.py")
     ).asString();
+    const std::string latency_csv_path = rf.check(
+        "latency_csv",
+        Value("")
+    ).asString();
     const std::string powerjoular_file = rf.check(
         "pwrjlr_file",
         Value("")
     ).asString();
     const std::string gpu_monitor_file = rf.check(
         "gpu_file",
-        Value("/workspace/moveEnetFlow/pwr_gpu_file/single_test/YoloPose_gpu_pwr")
+        Value("")
     ).asString();
     const int gpu_monitor_period_ms = rf.check(
         "gpu_period_ms",
@@ -416,6 +456,8 @@ int main(int argc, char *argv[])
     // ===== PREPARE CSV, VIDEO, AND VISUALIZATION RESOURCES =====
     std::ofstream csv_file;
     std::vector<std::string> csv_buffer;
+    std::ofstream latency_file;
+    std::vector<std::string> latency_buffer;
     VisualizationContext vis_ctx;
 
     // CSV format intentionally unchanged.
@@ -435,6 +477,28 @@ int main(int argc, char *argv[])
         }
         csv_file << "\n";
         csv_file.flush();
+    }
+
+    if (!latency_csv_path.empty()) {
+        latency_file.open(latency_csv_path);
+
+        if (!latency_file.is_open()) {
+            yError() << "Could not open latency CSV:"
+                    << latency_csv_path;
+            return -1;
+        }
+
+        latency_file
+            << "request_id,"
+            << "dataset_timestamp,"
+            << "scheduled_timestamp,"
+            << "latency_ms,"
+            << "response_received,"
+            << "valid_pose\n";
+
+        yInfo()
+            << "Per-inference latency logging enabled ->"
+            << latency_csv_path;
     }
 
     if (!initialiseVisualization(
@@ -584,18 +648,29 @@ int main(int argc, char *argv[])
         // 2. Execute at most one YOLO inference for the current video frame,
         // only when the next net_period deadline has been reached.
         if (tnow + time_epsilon >= next_inference_ts) {
+
+            const std::size_t request_id = inference_count;
+
+            // Important: this is the deadline that caused
+            // this inference to be executed.
+            const double scheduled_timestamp = next_inference_ts;
+
             if (inference_count == 0) {
                 first_inference_ts = tnow;
             }
 
             last_inference_ts = tnow;
-            ++inference_count;
+            bool response_received = false;
+            
 
             const bool valid_pose = yolo_handler.infer(
                 frame,
                 tnow,
-                detected_pose
+                detected_pose,
+                response_received
             );
+
+            ++inference_count;
 
             if (valid_pose) {
                 held_pose = detected_pose;
@@ -603,6 +678,35 @@ int main(int argc, char *argv[])
                 pose_initialised = true;
                 ++valid_inference_count;
             }
+
+            // One row per actual network request.
+            if (latency_file.is_open()) {
+                std::ostringstream row;
+
+                row << request_id
+                    << ","
+                    << std::fixed
+                    << std::setprecision(9)
+                    << tnow
+                    << ","
+                    << scheduled_timestamp
+                    << ",";
+
+                if (std::isnan(detected_pose.delay)) {
+                    row << "nan";
+                } else {
+                    row << std::setprecision(6)
+                        << detected_pose.delay * 1000.0;
+                }
+
+                row << ","
+                    << (response_received ? 1 : 0)
+                    << ","
+                    << (valid_pose ? 1 : 0);
+
+                latency_buffer.push_back(row.str());
+            }
+           
             // If YOLO returns an invalid pose, keep the previous valid pose.
 
             // Advance the absolute inference schedule. If the requested rate is
@@ -634,6 +738,20 @@ int main(int argc, char *argv[])
         }
         csv_file.close();
         yInfo() << "CSV rows written:" << csv_buffer.size() << "->" << output_csv;
+    }
+
+    if (latency_file.is_open()) {
+        for (const auto &line : latency_buffer) {
+            latency_file << line << "\n";
+        }
+
+        latency_file.close();
+
+        yInfo()
+            << "Latency rows written:"
+            << latency_buffer.size()
+            << "->"
+            << latency_csv_path;
     }
 
     yInfo() << "YOLO inferences completed:" << inference_count;
