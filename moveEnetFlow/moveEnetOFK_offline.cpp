@@ -51,6 +51,7 @@
 #include <sstream>
 #include <unistd.h>
 #include <cstdlib>
+#include <chrono>
 #include "utils/power_monitor.h"
 
 static std::string shellQuote(const std::string &s)
@@ -84,7 +85,7 @@ using yarp::os::Value;
 class offlineDetector
 {
 private:
-    double period{0.001};  // Minimum interval between requests (sec) and last send timestamp
+    // double period{0.001};  // Minimum interval between requests (sec) and last send timestamp
     cv::Size sensor_size;  // Logical image size used by the C++ pipeline
     cv::Size movenet_frame_size;  // Image size sent through YARP to MoveNet
 
@@ -102,7 +103,7 @@ public:
      * @param transport_size Size of the image sent to MoveNet over YARP
      * @return true if both ports opened successfully and rate was valid
      */
-    bool init(std::string output_name, std::string input_name, double rate,
+    bool init(std::string output_name, std::string input_name, /*double rate,*/
               const cv::Size &logical_size, const cv::Size &transport_size)
     {
         if (!output_port.open(output_name))
@@ -111,10 +112,10 @@ public:
         if (!input_port.open(input_name))
             return false;
 
-        if (rate <= 0.0)
-            return false;
+        // if (rate <= 0.0)
+        //     return false;
 
-        period = 1.0 / rate;
+        // period = 1.0 / rate;
         sensor_size = logical_size;
         movenet_frame_size = transport_size;
         return true;
@@ -162,9 +163,13 @@ public:
         }
 
         output_port.prepare().copy(yarp::cv::fromCvMat<PixelMono>(frame_to_send));
+
+        // Start latency measurement immediately before submitting the request.
+        const auto request_start = std::chrono::steady_clock::now();
+
         output_port.write();
 
-        const double req_wall_ts = yarp::os::Time::now();           // Timestamp when request was sent (for latency measurement)
+        // const double req_wall_ts = yarp::os::Time::now();           // Timestamp when request was sent (for latency measurement)
 
         // wait (blocking) for MoveNet response, then populate the stamped pose
         Bottle *mn_container = input_port.read(true);
@@ -173,7 +178,7 @@ public:
             previous_skeleton.pose = hpecore::extractSkeletonFromYARP<Bottle>(*mn_container);
             previous_skeleton.conf = hpecore::extractConfidenceFromYARP<Bottle>(*mn_container);
             previous_skeleton.timestamp = latest_ts;
-            previous_skeleton.delay = yarp::os::Time::now() - req_wall_ts;
+            // previous_skeleton.delay = yarp::os::Time::now() - req_wall_ts;
 
             if (sensor_size.area() > 0 && movenet_frame_size.area() > 0 && sensor_size != movenet_frame_size) {
                 for (auto &joint : previous_skeleton.pose) {
@@ -181,6 +186,11 @@ public:
                     joint.v = std::clamp(joint.v, 0.0f, static_cast<float>(sensor_size.height - 1));
                 }
             }
+
+            // Prediction is now completely available to the C++ pipeline.
+            const auto request_end = std::chrono::steady_clock::now();
+
+            previous_skeleton.delay = std::chrono::duration<double>( request_end - request_start ).count();
         }
 
         return mn_container != nullptr;
@@ -217,6 +227,7 @@ int main(int argc, char *argv[]){
         ss << std::left << std::setw(20) << "--use_lc" << std::setw(12) << "<bool>" << ": use latency compensation in KF\n";
         ss << std::left << std::setw(20) << "--vis" << std::setw(12) << "" << ": enable on-screen visualization\n";
         ss << std::left << std::setw(20) << "--output_csv_f" << std::setw(12) << "<string>" << ": path to output csv file\n";
+        ss << std::left << std::setw(20) << "--latency_csv" << std::setw(12) << "<string>" << ": per-inference MoveNet latency CSV\n";
         ss << std::left << std::setw(20) << "--include_velocities" << std::setw(12) << "" << ": when eval_format is set, also log velocities\n";
         ss << std::left << std::setw(20) << "--no_csv" << std::setw(12) << "" << ": skip CSV logging\n";
         ss << std::left << std::setw(20) << "--output_video" << std::setw(12) << "<string>"
@@ -245,7 +256,8 @@ int main(int argc, char *argv[]){
     double flow_period = rf.check("flow_period", Value(0.005)).asFloat64();                         // Range from 5ms to 100ms -> 200 Hz to 10 Hz
     bool moveenet_only = rf.check("moveenet_only");                                                  // If true, skip optical-flow/KF velocity update
     bool use_dhp19_size = rf.check("dhp19");                                    // Accept common typo as an alias
-    
+    std::string latency_csv_path = rf.check("latency_csv", Value("")).asString();
+
     cv::Size res;          // Actual sensor/event-surface resolution
     cv::Size movenet_res;  // Image resolution transported through YARP
 
@@ -279,7 +291,7 @@ int main(int argc, char *argv[]){
     bool no_video = rf.check("no_video");
     
     //std::string powerjoular_file = rf.check("pwrjlr_file", Value("/tmp/powerjoular.csv")).asString();
-    std::string gpu_monitor_file = rf.check("gpu_file", Value("/tmp/gpu_monitor.csv")).asString();
+    std::string gpu_monitor_file = rf.check("gpu_file", Value("")).asString();
     int gpu_monitor_period_ms = rf.check("gpu_period_ms", Value(5)).asInt32();
     int gpu_monitor_index = rf.check("gpu_index", Value(0)).asInt32();
     std::string device = rf.check("device", Value("cuda:0")).asString();
@@ -307,6 +319,10 @@ int main(int argc, char *argv[]){
     // Prepare CSV, video, and visualization resources
     std::ofstream csv_file;                             // CSV file stream for logging results
     std::vector<std::string> csv_buffer;                // store rows for deferred write
+
+    std::ofstream latency_file;
+    std::vector<std::string> latency_buffer;
+
     VisualizationContext vis_ctx;                      // Visualization and video writer resources
 
     // CSV writer setup
@@ -328,6 +344,27 @@ int main(int argc, char *argv[]){
         }
         csv_file << "\n";
         csv_file.flush();
+    }
+
+    if (!latency_csv_path.empty()) {
+        latency_file.open(latency_csv_path);
+
+        if (!latency_file.is_open()) {
+            yError() << "Could not open latency CSV:"
+                    << latency_csv_path;
+            return -1;
+        }
+
+        latency_file
+            << "request_id,"
+            << "dataset_timestamp,"
+            << "scheduled_timestamp,"
+            << "latency_ms,"
+            << "response_received,"
+            << "valid_pose\n";
+
+        yInfo() << "Per-inference latency logging enabled ->"
+                << latency_csv_path;
     }
 
     // Visualization and video setup, calls utils/visualization_utils.cpp
@@ -370,7 +407,7 @@ int main(int argc, char *argv[]){
     }
 
     // Detection frequency detF derived from moveEnet update period
-    double detF = 1.0 / net_period;                     // Detection frequency in Hz of MoveNet
+    // double detF = 1.0 / net_period;                     // Detection frequency in Hz of MoveNet
     double tnow = 0.0;                                  // Current simulation time
     double next_net_upd = 0.0;                          // event-time threshold for next MoveNet call
     double next_flow_upd = 0.0;                         // event-time threshold for next OF+KF update
@@ -425,7 +462,7 @@ int main(int argc, char *argv[]){
     yInfo() << "MoveEnet started correctly";
 
     // Init detector ports
-    mn_handler.init(eros_out, movenet_in, detF, res, movenet_res);
+    mn_handler.init(eros_out, movenet_in, /*detF,*/ res, movenet_res);
     yarp::os::Network::connect("/movenet/sklt:o", movenet_in, "fast_tcp");
     yarp::os::Network::connect(eros_out, "/movenet/img:i", "fast_tcp");
 
@@ -444,6 +481,15 @@ int main(int argc, char *argv[]){
     bool movenet_pose_available = false;
     hpecore::skeleton13 movenet_only_pose;
     double movenet_only_latency = 0.0;
+
+
+    // For latency logging
+    std::size_t inference_count = 0;
+    std::size_t valid_inference_count = 0;
+    std::size_t request_id = 0;
+
+    double first_inference_ts = -1.0;
+    double last_inference_ts = -1.0;
 
     while (true) {
         
@@ -489,12 +535,54 @@ int main(int argc, char *argv[]){
         //     if (was_detected && hpecore::poseNonZero(detected_pose.pose))
         //         pending_detection = true;  // latch until the next flow update consumes it
         // }
+
+        // Latency computation introduction
+        // if (tnow >= next_net_upd) {
+        //     next_net_upd = net_period + tnow;
+
+        //     was_detected = mn_handler.update(eros.getSurface(), tnow, detected_pose);
+
+        //     if (was_detected && hpecore::poseNonZero(detected_pose.pose)) {
+        //         if (moveenet_only) {
+        //             movenet_only_pose = detected_pose.pose;
+        //             movenet_only_latency = detected_pose.delay;
+        //             movenet_pose_available = true;
+        //         } else {
+        //             pending_detection = true;
+        //         }
+        //     }
+        // }
         if (tnow >= next_net_upd) {
+
+            // Keep the threshold that triggered this request for diagnostics.
+            const double scheduled_timestamp = next_net_upd;
+
+            // Preserve the original relative scheduling semantics.
             next_net_upd = net_period + tnow;
 
-            was_detected = mn_handler.update(eros.getSurface(), tnow, detected_pose);
+            if (inference_count == 0) {
+                first_inference_ts = tnow;
+            }
 
-            if (was_detected && hpecore::poseNonZero(detected_pose.pose)) {
+            last_inference_ts = tnow;
+
+            const std::size_t current_request_id = request_id++;
+
+            was_detected = mn_handler.update(
+                eros.getSurface(),
+                tnow,
+                detected_pose
+            );
+
+            ++inference_count;
+
+            const bool valid_pose =
+                was_detected &&
+                hpecore::poseNonZero(detected_pose.pose);
+
+            if (valid_pose) {
+                ++valid_inference_count;
+
                 if (moveenet_only) {
                     movenet_only_pose = detected_pose.pose;
                     movenet_only_latency = detected_pose.delay;
@@ -502,6 +590,34 @@ int main(int argc, char *argv[]){
                 } else {
                     pending_detection = true;
                 }
+            }
+
+            // Exactly one row for every actual MoveNet request.
+            if (latency_file.is_open()) {
+
+                std::ostringstream latency_row;
+
+                latency_row
+                    << current_request_id << ","
+                    << std::fixed << std::setprecision(9)
+                    << tnow << ","
+                    << scheduled_timestamp << ",";
+
+                if (was_detected) {
+                    latency_row
+                        << std::setprecision(6)
+                        << detected_pose.delay * 1000.0;
+                } else {
+                    latency_row << "nan";
+                }
+
+                latency_row
+                    << "," << (was_detected ? 1 : 0)
+                    << "," << (valid_pose ? 1 : 0);
+
+                latency_buffer.push_back(
+                    latency_row.str()
+                );
             }
         }
 
@@ -657,6 +773,36 @@ int main(int argc, char *argv[]){
 
     }
 
+    yInfo()
+        << "MoveNet inference requests:"
+        << inference_count;
+
+    yInfo()
+        << "MoveNet valid predictions:"
+        << valid_inference_count;
+
+    if (inference_count > 1 &&
+        last_inference_ts > first_inference_ts)
+    {
+        const double observed_inference_rate =
+            static_cast<double>(
+                inference_count - 1
+            ) /
+            (last_inference_ts -
+            first_inference_ts);
+
+        yInfo()
+            << "Requested MoveNet inference rate:"
+            << 1.0 / net_period
+            << "Hz";
+
+        yInfo()
+            << "Observed MoveNet inference rate:"
+            << observed_inference_rate
+            << "Hz";
+    }
+
+
 
     // Cleanup
     if (csv_file.is_open()) {
@@ -666,6 +812,20 @@ int main(int argc, char *argv[]){
         csv_file.close();
         yInfo() << "CSV rows written:" << csv_buffer.size() << "->" << output_csv_f;
     }
+
+    if (latency_file.is_open()) {
+        for (const auto &line : latency_buffer) {
+            latency_file << line << "\n";
+        }
+
+        latency_file.close();
+
+        yInfo() << "Latency rows written:"
+                << latency_buffer.size()
+                << "->"
+                << latency_csv_path;
+    }
+
     power_monitor.stop();
     mn_handler.close();
     yarp::os::Network::disconnect("/movenet/sklt:o", movenet_in, "fast_tcp");
