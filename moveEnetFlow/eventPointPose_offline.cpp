@@ -25,6 +25,7 @@
 #include <string>
 #include <unistd.h>
 #include <vector>
+#include <chrono>
 
 using yarp::os::Bottle;
 using yarp::os::BufferedPort;
@@ -76,13 +77,19 @@ struct PoseSample
 struct ServerReply
 {
     bool transport_ok{false};
+    bool response_received{false};
     bool has_pose{false};
+
     std::string status{"ERROR"};
     std::string message;
+
     int fifo_size{0};
     int accepted_events{0};
     int rasepc_points{0};
+
+    // Seconds in C++; converted from server diagnostic milliseconds.
     double server_processing_time{0.0};
+
     PoseSample pose{};
 };
 
@@ -339,70 +346,163 @@ public:
             payload.addInt32(event.polarity);
         }
 
-        const double wall_start = yarp::os::Time::now();
+        result.pose.timestamp = inference_timestamp;
+        result.pose.latency =
+            std::numeric_limits<double>::quiet_NaN();
+
+        using Clock = std::chrono::steady_clock;
+
+        // ============================================================
+        // LATENCY START
+        // The request Bottle and event payload are already prepared.
+        // ============================================================
+        const auto request_start = Clock::now();
+
+        auto finishLatency = [&]() {
+            const auto request_end = Clock::now();
+
+            result.pose.latency =
+                std::chrono::duration<double>(
+                    request_end - request_start
+                ).count();
+        };
+
         request_port.write();
+
         Bottle *response = readResponse();
+
         if (response == nullptr) {
+            finishLatency();
+
             result.status = "TIMEOUT";
-            result.message = "Timed out waiting for EventPointPose response.";
+            result.message =
+                "Timed out waiting for EventPointPose response.";
+
             return result;
         }
 
+        // A response was actually received from the service.
+        result.response_received = true;
         result.transport_ok = true;
-        result.pose.latency = yarp::os::Time::now() - wall_start;
-        result.pose.timestamp = inference_timestamp;
 
         if (response->size() < 3) {
             result.transport_ok = false;
             result.status = "PROTOCOL_ERROR";
-            result.message = "Response contains fewer than three elements.";
+            result.message =
+                "Response contains fewer than three elements.";
+
+            finishLatency();
             return result;
         }
 
         result.status = response->get(2).asString();
-        const int response_id = response->size() > 3
-            ? response->get(3).asInt32()
-            : request_id;
+
+        const int response_id =
+            response->size() > 3
+                ? response->get(3).asInt32()
+                : request_id;
+
         if (response_id != request_id) {
             result.transport_ok = false;
             result.status = "PROTOCOL_ERROR";
-            result.message = "Response request id does not match the outstanding request.";
+            result.message =
+                "Response request id does not match the outstanding request.";
+
+            finishLatency();
             return result;
         }
 
+        // Server diagnostics:
+        // [accepted_events, fifo_size, rasepc_points, inference_ms]
         if (response->size() > 4) {
-            Bottle *diagnostics = response->get(4).asList();
-            if (diagnostics != nullptr && diagnostics->size() >= 4) {
-                result.accepted_events = static_cast<int>(diagnostics->get(0).asFloat64());
-                result.fifo_size = static_cast<int>(diagnostics->get(1).asFloat64());
-                result.rasepc_points = static_cast<int>(diagnostics->get(2).asFloat64());
-                // The sidecar reports this diagnostic in milliseconds.
-                result.server_processing_time = diagnostics->get(3).asFloat64() * 0.001;
+
+            Bottle *diagnostics =
+                response->get(4).asList();
+
+            if (diagnostics != nullptr &&
+                diagnostics->size() >= 4)
+            {
+                result.accepted_events =
+                    static_cast<int>(
+                        diagnostics->get(0).asFloat64()
+                    );
+
+                result.fifo_size =
+                    static_cast<int>(
+                        diagnostics->get(1).asFloat64()
+                    );
+
+                result.rasepc_points =
+                    static_cast<int>(
+                        diagnostics->get(2).asFloat64()
+                    );
+
+                // Python sends milliseconds.
+                // Internally we keep seconds.
+                result.server_processing_time =
+                    diagnostics->get(3).asFloat64() * 0.001;
             }
         }
+
         if (response->size() > 5) {
-            result.message = response->get(5).asString();
+            result.message =
+                response->get(5).asString();
         }
 
+        // WARMUP / NO_UPDATE / ERROR:
+        // valid service responses, but no usable PointNet pose.
         if (result.status != "OK") {
+            finishLatency();
             return result;
         }
 
-        Bottle *pose_payload = response->get(1).asList();
-        if (pose_payload == nullptr || pose_payload->size() < 39) {
+        Bottle *pose_payload =
+            response->get(1).asList();
+
+        if (pose_payload == nullptr ||
+            pose_payload->size() < 39)
+        {
             result.transport_ok = false;
             result.status = "PROTOCOL_ERROR";
-            result.message = "OK response does not contain the 39-value hpe-core payload.";
+            result.message =
+                "OK response does not contain the 39-value hpe-core payload.";
+
+            finishLatency();
             return result;
         }
 
-        for (int joint = 0; joint < kJointCount; ++joint) {
-            result.pose.joints[joint].x = pose_payload->get(2 * joint).asFloat64();
-            result.pose.joints[joint].y = pose_payload->get(2 * joint + 1).asFloat64();
+        // ============================================================
+        // Decode response -> usable hpe-core pose.
+        // INCLUDED in service latency.
+        // ============================================================
+        for (int joint = 0;
+            joint < kJointCount;
+            ++joint)
+        {
+            result.pose.joints[joint].x =
+                pose_payload->get(
+                    2 * joint
+                ).asFloat64();
+
+            result.pose.joints[joint].y =
+                pose_payload->get(
+                    2 * joint + 1
+                ).asFloat64();
+
             result.pose.confidence[joint] =
-                pose_payload->get(26 + joint).asFloat64();
+                pose_payload->get(
+                    26 + joint
+                ).asFloat64();
         }
+
         result.has_pose = true;
+
+        // ============================================================
+        // LATENCY END:
+        // C++ now has a usable pose.
+        // ============================================================
+        finishLatency();
+
         return result;
     }
 
@@ -461,6 +561,7 @@ int main(int argc, char *argv[])
              << std::setw(30) << "--output_period <seconds>" << ": held-pose CSV period, default 0.005\n"
              << std::setw(30) << "--output_csv <path>" << ": output CSV, default /tmp/EventPointPose_output.csv\n"
              << std::setw(30) << "--no_csv" << ": disable CSV output\n"
+             << std::setw(30) << "--latency_csv <path>" << ": one row per EventPointPose service request\n"
              << std::setw(30) << "--camera <2|3>" << ": camera id; default inferred from data_file\n"
              << std::setw(30) << "--model_path <path>" << ": PointNet MeanLabel checkpoint\n"
              << std::setw(30) << "--EventPointPose_script <path>" << ": Python YARP sidecar (legacy: --eventPointPose_script)\n"
@@ -493,6 +594,10 @@ int main(int argc, char *argv[])
     const std::string output_csv = rf.check(
         "output_csv",
         rf.check("output_file", Value("/tmp/EventPointPose_output.csv"))
+    ).asString();
+    const std::string latency_csv_path = rf.check(
+        "latency_csv",
+        Value("")
     ).asString();
     const bool no_csv = rf.check("no_csv");
 
@@ -613,14 +718,45 @@ int main(int argc, char *argv[])
     }
 
     std::ofstream csv;
+    std::ofstream latency_file;
+    std::vector<std::string> latency_buffer;
+
     if (!no_csv) {
-        csv.open(output_csv);
-        if (!csv.is_open()) {
-            yError() << "Could not open CSV file:" << output_csv;
+            csv.open(output_csv);
+            if (!csv.is_open()) {
+                yError() << "Could not open CSV file:" << output_csv;
+                return -1;
+            }
+            writeCsvHeader(csv);
+            yInfo() << "CSV output:" << output_csv;
+        }
+        if (!latency_csv_path.empty()) {
+
+        latency_file.open(latency_csv_path);
+
+        if (!latency_file.is_open()) {
+            yError() << "Could not open latency CSV:"
+                    << latency_csv_path;
             return -1;
         }
-        writeCsvHeader(csv);
-        yInfo() << "CSV output:" << output_csv;
+
+        latency_file
+            << "request_id,"
+            << "dataset_timestamp,"
+            << "scheduled_timestamp,"
+            << "latency_ms,"
+            << "response_received,"
+            << "valid_pose,"
+            << "status,"
+            << "input_events,"
+            << "accepted_events,"
+            << "fifo_size,"
+            << "rasepc_points,"
+            << "server_processing_ms\n";
+
+        yInfo()
+            << "Per-request latency logging enabled ->"
+            << latency_csv_path;
     }
 
     EventPointPoseClient client;
@@ -669,8 +805,11 @@ int main(int argc, char *argv[])
     std::size_t no_update_count = 0;
     std::size_t server_error_count = 0;
     std::size_t csv_rows = 0;
-    double first_inference_ts = -1.0;
-    double last_inference_ts = -1.0;
+    double first_request_ts = -1.0;
+    double last_request_ts = -1.0;
+
+    double first_valid_inference_ts = -1.0;
+    double last_valid_inference_ts = -1.0;
 
     auto emitOutput = [&](double output_timestamp) {
         if (!pose_initialised || !csv.is_open()) {
@@ -722,48 +861,149 @@ int main(int argc, char *argv[])
         // Missed absolute deadlines are skipped by advancing the schedule after
         // the request, exactly as in the agreed YOLO-style offline semantics.
         if (current_timestamp + kTimeEpsilon >= next_inference_ts) {
+
+            // Save scheduling information BEFORE advancing next_inference_ts.
+            const double scheduled_timestamp = next_inference_ts;
+            const int this_request_id = request_id++;
+            const std::size_t input_event_count = pending_batch.size();
+
             if (request_count == 0) {
-                first_inference_ts = current_timestamp;
+                first_request_ts = current_timestamp;
             }
-            last_inference_ts = current_timestamp;
+
+            last_request_ts = current_timestamp;
             ++request_count;
 
             ServerReply reply = client.infer(
-                pending_batch, current_timestamp, camera, request_id++
+                pending_batch,
+                current_timestamp,
+                camera,
+                this_request_id
             );
 
+            const bool valid_pose =
+                reply.transport_ok &&
+                reply.response_received &&
+                reply.status == "OK" &&
+                reply.has_pose;
+
+            // ============================================================
+            // ONE latency row per real service request.
+            // ============================================================
+            if (latency_file.is_open()) {
+
+                std::ostringstream row;
+
+                row << this_request_id
+                    << ","
+                    << std::fixed
+                    << std::setprecision(9)
+                    << current_timestamp
+                    << ","
+                    << scheduled_timestamp
+                    << ",";
+
+                if (std::isfinite(reply.pose.latency)) {
+                    row << std::setprecision(6)
+                        << reply.pose.latency * 1000.0;
+                } else {
+                    row << "nan";
+                }
+
+                row << ","
+                    << (reply.response_received ? 1 : 0)
+                    << ","
+                    << (valid_pose ? 1 : 0)
+                    << ","
+                    << reply.status
+                    << ","
+                    << input_event_count
+                    << ","
+                    << reply.accepted_events
+                    << ","
+                    << reply.fifo_size
+                    << ","
+                    << reply.rasepc_points
+                    << ",";
+
+                if (reply.server_processing_time > 0.0) {
+                    row << std::setprecision(6)
+                        << reply.server_processing_time * 1000.0;
+                } else {
+                    row << "0.000000";
+                }
+
+                latency_buffer.push_back(row.str());
+            }
+
+            // Log the failed request before aborting.
             if (!reply.transport_ok) {
-                yError() << "EventPointPose request failed:" << reply.status
-                         << reply.message;
+                yError()
+                    << "EventPointPose request failed:"
+                    << reply.status
+                    << reply.message;
+
                 return false;
             }
 
-            // The server has consumed the batch for every valid protocol
-            // response, including WARMUP, NO_UPDATE, and ERROR.
+            // The server consumed the batch for every valid protocol response:
+            // OK, WARMUP, NO_UPDATE, ERROR.
             pending_batch.clear();
 
-            if (reply.has_pose && reply.status == "OK") {
+            if (valid_pose) {
+
                 held_pose = reply.pose;
                 pose_initialised = true;
+
+                if (valid_inference_count == 0) {
+                    first_valid_inference_ts = current_timestamp;
+                }
+
+                last_valid_inference_ts = current_timestamp;
                 ++valid_inference_count;
-            } else if (reply.status == "WARMUP") {
+
+            }
+            else if (reply.status == "WARMUP") {
+
                 ++warmup_count;
-                yInfo() << "EventPointPose warm-up: FIFO" << reply.fifo_size
-                        << "/" << fifo_size;
-            } else if (reply.status == "NO_UPDATE") {
+
+                yInfo()
+                    << "EventPointPose warm-up: FIFO"
+                    << reply.fifo_size
+                    << "/"
+                    << fifo_size;
+
+            }
+            else if (reply.status == "NO_UPDATE") {
+
                 ++no_update_count;
-            } else if (reply.status == "ERROR") {
+
+            }
+            else if (reply.status == "ERROR") {
+
                 ++server_error_count;
-                yWarning() << "EventPointPose server returned ERROR:"
-                           << reply.message;
-            } else {
-                yWarning() << "EventPointPose returned status" << reply.status
-                           << reply.message;
+
+                yWarning()
+                    << "EventPointPose server returned ERROR:"
+                    << reply.message;
+
+            }
+            else {
+
+                yWarning()
+                    << "EventPointPose returned status"
+                    << reply.status
+                    << reply.message;
             }
 
+            // Keep the existing absolute YOLO-style schedule unchanged.
             do {
                 next_inference_ts += net_period;
-            } while (next_inference_ts <= current_timestamp + kTimeEpsilon);
+            }
+            while (
+                next_inference_ts <=
+                current_timestamp + kTimeEpsilon
+            );
         }
 
         // Outputs coincident with the packet timestamp are generated after the
@@ -827,6 +1067,21 @@ int main(int argc, char *argv[])
         csv.close();
     }
 
+    if (latency_file.is_open()) {
+
+        for (const auto &line : latency_buffer) {
+            latency_file << line << "\n";
+        }
+
+        latency_file.close();
+
+        yInfo()
+            << "Latency rows written:"
+            << latency_buffer.size()
+            << "->"
+            << latency_csv_path;
+    }
+
     client.close();
 
     yInfo() << "Packet groups processed:" << packet_groups;
@@ -839,11 +1094,39 @@ int main(int argc, char *argv[])
     yInfo() << "CSV rows written:" << csv_rows;
     yInfo() << "Python server log:" << server_log;
 
-    if (request_count > 1 && last_inference_ts > first_inference_ts) {
-        const double observed_rate = static_cast<double>(request_count - 1) /
-            (last_inference_ts - first_inference_ts);
-        yInfo() << "Requested inference rate:" << 1.0 / net_period << "Hz";
-        yInfo() << "Observed inference rate:" << observed_rate << "Hz";
+  
+    yInfo()
+        << "Requested service rate:"
+        << 1.0 / net_period
+        << "Hz";
+
+    if (request_count > 1 &&
+        last_request_ts > first_request_ts)
+    {
+        const double observed_request_rate =
+            static_cast<double>(request_count - 1) /
+            (last_request_ts - first_request_ts);
+
+        yInfo()
+            << "Observed service request rate:"
+            << observed_request_rate
+            << "Hz";
+    }
+
+    if (valid_inference_count > 1 &&
+        last_valid_inference_ts > first_valid_inference_ts)
+    {
+        const double observed_valid_rate =
+            static_cast<double>(valid_inference_count - 1) /
+            (
+                last_valid_inference_ts -
+                first_valid_inference_ts
+            );
+
+        yInfo()
+            << "Observed valid PointNet inference rate:"
+            << observed_valid_rate
+            << "Hz";
     }
 
     if (gStopRequested != 0) {
