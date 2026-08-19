@@ -359,9 +359,11 @@ int main(int argc, char *argv[]){
             << "request_id,"
             << "dataset_timestamp,"
             << "scheduled_timestamp,"
-            << "latency_ms,"
+            << "service_latency_ms,"
+            << "method_latency_ms,"
             << "response_received,"
-            << "valid_pose\n";
+            << "valid_pose,"
+            << "fusion_dataset_timestamp\n";
 
         yInfo() << "Per-inference latency logging enabled ->"
                 << latency_csv_path;
@@ -474,6 +476,21 @@ int main(int argc, char *argv[]){
     double next_packet_ts = 0.0;                // start from t=0; loader will advance on first increment
     int batch_count = 0;
     bool pending_detection = false;             // true when a new MoveNet result is waiting to correct the KF
+
+    // Pending complete-method latency for MoveEnetOFK
+    bool pending_method_latency = false;
+
+    std::size_t pending_request_id = 0;
+
+    double pending_dataset_timestamp = 0.0;
+    double pending_scheduled_timestamp = 0.0;
+
+    double pending_service_latency_s =
+        std::numeric_limits<double>::quiet_NaN();
+
+    std::chrono::steady_clock::time_point pending_method_start;
+
+
     hpecore::skeleton13 jvs;                    // last known joint velocities (persistent across iterations)
     hpecore::skeleton13 filtered_pose;          // last known filtered pose (persistent across iterations)
 
@@ -568,6 +585,8 @@ int main(int argc, char *argv[]){
 
             const std::size_t current_request_id = request_id++;
 
+            const auto method_start = std::chrono::steady_clock::now();
+
             was_detected = mn_handler.update(
                 eros.getSurface(),
                 tnow,
@@ -580,6 +599,9 @@ int main(int argc, char *argv[]){
                 was_detected &&
                 hpecore::poseNonZero(detected_pose.pose);
 
+            double method_latency_s =
+                std::numeric_limits<double>::quiet_NaN();
+
             if (valid_pose) {
                 ++valid_inference_count;
 
@@ -587,13 +609,40 @@ int main(int argc, char *argv[]){
                     movenet_only_pose = detected_pose.pose;
                     movenet_only_latency = detected_pose.delay;
                     movenet_pose_available = true;
+
+                    const auto method_end =
+                        std::chrono::steady_clock::now();
+
+                    method_latency_s =
+                        std::chrono::duration<double>(
+                            method_end - method_start
+                        ).count();
                 } else {
                     pending_detection = true;
+
+                    // Keep timing information until this detection is
+                    // actually incorporated into the OF+KF output.
+                    pending_method_latency = true;
+
+                    pending_request_id =
+                        current_request_id;
+
+                    pending_dataset_timestamp =
+                        tnow;
+
+                    pending_scheduled_timestamp =
+                        scheduled_timestamp;
+
+                    pending_service_latency_s =
+                        detected_pose.delay;
+
+                    pending_method_start =
+                        method_start;
                 }
             }
 
             // Exactly one row for every actual MoveNet request.
-            if (latency_file.is_open()) {
+            if (latency_file.is_open() && moveenet_only) {
 
                 std::ostringstream latency_row;
 
@@ -603,6 +652,7 @@ int main(int argc, char *argv[]){
                     << tnow << ","
                     << scheduled_timestamp << ",";
 
+                // Internal/model-service latency
                 if (was_detected) {
                     latency_row
                         << std::setprecision(6)
@@ -611,9 +661,23 @@ int main(int argc, char *argv[]){
                     latency_row << "nan";
                 }
 
+                latency_row << ",";
+
+                // Complete-method latency
+                if (std::isfinite(method_latency_s)) {
+                    latency_row
+                        << std::setprecision(6)
+                        << method_latency_s * 1000.0;
+                } else {
+                    latency_row << "nan";
+                }
+
                 latency_row
                     << "," << (was_detected ? 1 : 0)
-                    << "," << (valid_pose ? 1 : 0);
+                    << "," << (valid_pose ? 1 : 0)
+                    << ","
+                    << std::fixed << std::setprecision(9)
+                    << tnow;
 
                 latency_buffer.push_back(
                     latency_row.str()
@@ -626,6 +690,7 @@ int main(int argc, char *argv[]){
         if (!moveenet_only && tnow >= next_flow_upd) {
             next_flow_upd = flow_period + tnow;
             did_flow_update = true;
+            bool consumed_detection = false;
 
             // 1. Use latest valid MoveNet pose, if available, to initialize/correct KF
             if (pending_detection) {
@@ -636,6 +701,7 @@ int main(int argc, char *argv[]){
                 }
 
                 pending_detection = false;
+                consumed_detection = true;
             }
 
             // If no KF state exists yet, no fusion step can be performed
@@ -660,7 +726,61 @@ int main(int argc, char *argv[]){
 
             // 5. Query KF state for output
             filtered_pose = state.query();
-        }
+
+            // 6. If a MoveNet detection was consumed, log the latency information
+            if (consumed_detection && pending_method_latency) {
+
+                const auto method_end =
+                    std::chrono::steady_clock::now();
+
+                const double method_latency_s =
+                    std::chrono::duration<double>(
+                        method_end - pending_method_start
+                    ).count();
+
+                if (latency_file.is_open()) {
+
+                    std::ostringstream latency_row;
+
+                    latency_row
+                        << pending_request_id << ","
+                        << std::fixed << std::setprecision(9)
+                        << pending_dataset_timestamp << ","
+                        << pending_scheduled_timestamp << ",";
+
+                    // Internal MoveNet service latency
+                    if (std::isfinite(pending_service_latency_s)) {
+                        latency_row
+                            << std::setprecision(6)
+                            << pending_service_latency_s * 1000.0;
+                    } else {
+                        latency_row << "nan";
+                    }
+
+                    // Complete MoveEnetOFK method latency
+                    latency_row
+                        << ","
+                        << std::setprecision(6)
+                        << method_latency_s * 1000.0
+
+                        // A pending OFK latency exists only for a valid
+                        // MoveNet prediction, therefore both are guaranteed.
+                        << ",1"   // response_received
+                        << ",1"   // valid_pose
+
+                        // Dataset time at which OF+KF produced the fused pose
+                        << ","
+                        << std::fixed << std::setprecision(9)
+                        << tnow;
+
+                    latency_buffer.push_back(
+                        latency_row.str()
+                    );
+                }
+
+                pending_method_latency = false;
+            }
+                    }
 
 
         // // FIRST VERSION:
