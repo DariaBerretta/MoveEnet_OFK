@@ -19,6 +19,9 @@
 #include <cstdlib>
 #include <openpose/headers.hpp>
 #include <tuple>
+#include <chrono>
+#include <limits>
+#include <cmath>
 
 #include "utils/power_monitor.h"
 #include "utils/visualization_utils.h"
@@ -31,7 +34,7 @@ using yarp::os::Value;
 class offlineDetector
 {
 private:
-    double period{0.001};
+    // double period{0.001};
 
     // OpenPose
     op::Wrapper opWrapper{op::ThreadManagerMode::Asynchronous};
@@ -45,7 +48,7 @@ public:
     bool init(const std::string& model_folder, double rate, const std::string& device = std::string())
     {
         if (rate <= 0.0) return false;
-        period = 1.0 / rate;
+        // period = 1.0 / rate;
 
         try {
             op::WrapperStructPose poseConfig{};
@@ -101,39 +104,88 @@ public:
     }
 
     bool update(const cv::Mat &latest_image,
-                double latest_ts,
-                hpecore::stampedPose &previous_skeleton)
+            double latest_ts,
+            hpecore::stampedPose &previous_skeleton,
+            bool &response_received)
     {
-        if (!op_ready)
+        response_received = false;
+
+        previous_skeleton.timestamp = latest_ts;
+        previous_skeleton.delay =
+            std::numeric_limits<double>::quiet_NaN();
+
+        if (!op_ready || latest_image.empty())
             return false;
 
-        double t0 = yarp::os::Time::now();
-        previous_skeleton.timestamp = latest_ts;
-        previous_skeleton.delay = 0.0;          // will be overwritten on success
+        // ============================================================
+        // Caller-side preprocessing: EXCLUDED from measured latency
+        // ============================================================
 
         // OpenPose expects BGR
         cv::Mat input_bgr;
-        if (latest_image.channels() == 3)
+        if (latest_image.channels() == 3) {
             input_bgr = latest_image;
-        else
+        }
+        else if (latest_image.channels() == 4) {
+            cv::cvtColor(latest_image, input_bgr, cv::COLOR_BGRA2BGR);
+        }
+        else {
             cv::cvtColor(latest_image, input_bgr, cv::COLOR_GRAY2BGR);
+        }
 
-        // Convert to OpenPose format
-        const op::Matrix imageToProcess = OP_CV2OPCONSTMAT(input_bgr);
+        // Convert/wrap input in OpenPose format
+        const op::Matrix imageToProcess =
+            OP_CV2OPCONSTMAT(input_bgr);
 
-        auto datumProcessed = opWrapper.emplaceAndPop(imageToProcess);
+        // ============================================================
+        // LATENCY START
+        // ============================================================
 
-        if (!datumProcessed || datumProcessed->empty())
+        const auto request_start =
+            std::chrono::steady_clock::now();
+
+        auto datumProcessed =
+            opWrapper.emplaceAndPop(imageToProcess);
+
+        // OpenPose call returned: analogous to receiving the response
+        // from the Python sidecar for MoveNet / YOLOPose.
+        if (datumProcessed && !datumProcessed->empty())
+            response_received = true;
+
+        // We still measure failed/empty responses.
+        if (!response_received) {
+            const auto request_end =
+                std::chrono::steady_clock::now();
+
+            previous_skeleton.delay =
+                std::chrono::duration<double>(
+                    request_end - request_start
+                ).count();
+
             return false;
+        }
 
-        const auto& keypoints = datumProcessed->at(0)->poseKeypoints;
+        const auto& keypoints =
+            datumProcessed->at(0)->poseKeypoints;
 
-        if (keypoints.getSize(0) == 0)
+        if (keypoints.getSize(0) == 0 ||
+            keypoints.getSize(1) < 15)
+        {
+            const auto request_end =
+                std::chrono::steady_clock::now();
+
+            previous_skeleton.delay =
+                std::chrono::duration<double>(
+                    request_end - request_start
+                ).count();
+
             return false;
-        if (keypoints.getSize(1) < 15)
-            return false;
+        }
 
-        // ===== Convert BODY_25 → skeleton13 =====
+        // ============================================================
+        // BODY_25 -> skeleton13
+        // Included in latency, like pose decoding for MoveNet/YOLO
+        // ============================================================
 
         hpecore::skeleton13 pose13{};
         hpecore::confidence13 conf13{};
@@ -141,42 +193,33 @@ public:
         pose13.fill({0.f, 0.f});
         conf13.fill(0.f);
 
-        int person = 0;
+        constexpr int person = 0;
 
         auto getXYC = [&](int part)
         {
-            float x = keypoints[{person, part, 0}];
-            float y = keypoints[{person, part, 1}];
-            float c = keypoints[{person, part, 2}];
-            return std::tuple<float,float,float>(x,y,c);
+            const float x = keypoints[{person, part, 0}];
+            const float y = keypoints[{person, part, 1}];
+            const float c = keypoints[{person, part, 2}];
+
+            return std::tuple<float, float, float>(x, y, c);
         };
 
         auto setJoint = [&](int j13, int op_idx)
         {
-            auto [x,y,c] = getXYC(op_idx);
-            pose13[j13] = {x,y};
+            auto [x, y, c] = getXYC(op_idx);
+            pose13[j13] = {x, y};
             conf13[j13] = c;
         };
 
-        auto setHeadMidpoint = [&]()
-        {
-            auto [x0,y0,c0] = getXYC(0);
-            auto [x1,y1,c1] = getXYC(1);
-            pose13[hpecore::head] = {(x0 + x1) * 0.5f, (y0 + y1) * 0.5f};
-            conf13[hpecore::head] = std::max(c0, c1);
-        };
-
-        // BODY_25 mapping
-        // setHeadMidpoint();
         setJoint(hpecore::head,       0);
-        setJoint(hpecore::shoulderR, 2);
-        setJoint(hpecore::shoulderL, 5);
-        setJoint(hpecore::elbowR,    3);
-        setJoint(hpecore::elbowL,    6);
+        setJoint(hpecore::shoulderR,  2);
+        setJoint(hpecore::shoulderL,  5);
+        setJoint(hpecore::elbowR,     3);
+        setJoint(hpecore::elbowL,     6);
         setJoint(hpecore::hipL,      12);
-        setJoint(hpecore::hipR,      9);
-        setJoint(hpecore::handR,     4);
-        setJoint(hpecore::handL,     7);
+        setJoint(hpecore::hipR,       9);
+        setJoint(hpecore::handR,      4);
+        setJoint(hpecore::handL,      7);
         setJoint(hpecore::kneeR,     10);
         setJoint(hpecore::kneeL,     13);
         setJoint(hpecore::footR,     11);
@@ -185,9 +228,20 @@ public:
         previous_skeleton.pose = pose13;
         previous_skeleton.conf = conf13;
         previous_skeleton.timestamp = latest_ts;
-        previous_skeleton.delay = yarp::os::Time::now() - t0;
 
-        return true;
+        // ============================================================
+        // LATENCY END: usable skeleton available
+        // ============================================================
+
+        const auto request_end =
+            std::chrono::steady_clock::now();
+
+        previous_skeleton.delay =
+            std::chrono::duration<double>(
+                request_end - request_start
+            ).count();
+
+        return hpecore::poseNonZero(previous_skeleton.pose);
     }
 };
 
@@ -214,6 +268,7 @@ int main(int argc, char *argv[]){
         ss << std::left << std::setw(24) << "--no_video"        << std::setw(12) << ""         << ": disable video output\n";
         ss << std::left << std::setw(24) << "--op_model_path" << std::setw(12) << "<string>" << ": path to OpenPose model weights\n";
         ss << std::left << std::setw(24) << "--openpose_script" << std::setw(12) << "<string>" << ": path to OpenPose Python script\n";
+        ss << std::left << std::setw(24) << "--latency_csv" << std::setw(12) << "<string>" << ": per-inference latency CSV\n";
         ss << std::left << std::setw(24) << "--pwrjlr_file"     << std::setw(12) << "<string>" << ": base path for PowerJoular output\n";
         ss << std::left << std::setw(24) << "--gpu_file"        << std::setw(12) << "<string>" << ": output CSV for GPU telemetry\n";
         ss << std::left << std::setw(24) << "--device"          << std::setw(12) << "<string>" << ": device for OpenPose (cpu or cuda:N)\n";
@@ -227,7 +282,7 @@ int main(int argc, char *argv[]){
     // Read parameters from command line with default values
     std::string datapath_file = rf.check("data_file", Value("/data/eh36m_testing_set_S9S11/rgb/cam2_S9_Directions_1.mp4")).asString();
     double output_period = rf.check("output_period", Value(0.005)).asFloat64();                     // CSV write period
-    double net_period = rf.check("net_period", Value(0.0)).asFloat64();                            // Range from 5ms to 100ms -> 200 Hz to 10 Hz
+    double net_period = rf.check("net_period", Value(0.05)).asFloat64();                            // Range from 5ms to 100ms -> 200 Hz to 10 Hz
     cv::Size res(rf.check("w", Value(640)).asInt32(), rf.check("h", Value(480)).asInt32());
     bool is_visualize = rf.check("vis");                                                            // Visualization flag
     std::string output_csv = rf.check("output_csv", Value("tmp/output.csv")).asString();
@@ -235,9 +290,10 @@ int main(int argc, char *argv[]){
     std::string output_video = rf.check("output_video", Value("tmp/output.mp4")).asString();
     bool no_video = rf.check("no_video");
     std::string op_model_path = rf.check("op_model_path", Value("/usr/local/src/openpose/models/")).asString();
+    std::string latency_csv_path = rf.check("latency_csv", Value("")).asString();
     // std::string op_model_path = rf.check("op_model_path", Value("/model mounts/OpenPose/")).asString();
     std::string powerjoular_file = rf.check("pwrjlr_file", Value("")).asString();
-    std::string gpu_monitor_file = rf.check("gpu_file", Value("tmp/gpu_monitor.csv")).asString();
+    std::string gpu_monitor_file = rf.check("gpu_file", Value("")).asString();
     int gpu_monitor_period_ms = rf.check("gpu_period_ms", Value(5)).asInt32();
     int gpu_monitor_index = rf.check("gpu_index", Value(0)).asInt32();
     std::string device = rf.check("device", Value("")).asString();
@@ -276,6 +332,8 @@ int main(int argc, char *argv[]){
     // ===== PREPARE CSV, VIDEO, AND VISUALIZATION RESOURCES =====
     std::ofstream csv_file;                             // CSV file stream for logging results
     std::vector<std::string> csv_buffer;                // store rows for deferred write
+    std::ofstream latency_file;
+    std::vector<std::string> latency_buffer;
     VisualizationContext vis_ctx;                      // Visualization and video writer resources
 
     // CSV writer setup
@@ -292,6 +350,29 @@ int main(int argc, char *argv[]){
         }
         csv_file << "\n";
         csv_file.flush();
+    }
+
+    if (!latency_csv_path.empty()) {
+
+        latency_file.open(latency_csv_path);
+
+        if (!latency_file.is_open()) {
+            yError() << "Could not open latency CSV:"
+                    << latency_csv_path;
+            return -1;
+        }
+
+        latency_file
+            << "request_id,"
+            << "dataset_timestamp,"
+            << "scheduled_timestamp,"
+            << "latency_ms,"
+            << "response_received,"
+            << "valid_pose\n";
+
+        yInfo()
+            << "Per-inference latency logging enabled ->"
+            << latency_csv_path;
     }
 
     // Visualization and video setup
@@ -324,9 +405,18 @@ int main(int argc, char *argv[]){
     bool pose_initialised = false;                      // True after first valid detection
 
     double tnow = 0.0;                                  // Current simulation time
-    double next_net_upd = net_period;                   // time threshold for next OpenPose call
+    double next_net_upd = 0.0;                         // time threshold for next OpenPose call
     double next_csv_upd = output_period;               // time threshold for next CSV row
     double next_vis_upd = output_period;               // time threshold for next visualization frame
+
+    std::size_t inference_count = 0;
+    std::size_t valid_inference_count = 0;
+
+    double first_inference_ts = std::numeric_limits<double>::quiet_NaN();
+
+    double last_inference_ts = std::numeric_limits<double>::quiet_NaN();
+
+    constexpr double time_epsilon = 1e-9;
 
 
     // ===== MAIN PROCESSING LOOP (frame-by-frame) =====
@@ -346,13 +436,79 @@ int main(int argc, char *argv[]){
 
         // Send frame to OpenPose at net_period intervals
         bool was_detected = false;
-        if (tnow >= next_net_upd) {
-            next_net_upd += net_period;
-            was_detected = op_handler.update(frame, tnow, detected_pose);
-            if (was_detected && hpecore::poseNonZero(detected_pose.pose)) {
+        bool response_received = false;
+
+        // if (tnow >= next_net_upd) {
+        //     next_net_upd += net_period;
+        //     was_detected = op_handler.update(frame, tnow, detected_pose, response_received);
+        //     if (was_detected && hpecore::poseNonZero(detected_pose.pose)) {
+        //         filtered_pose = detected_pose.pose;
+        //         pose_initialised = true;
+        //     }
+        // }
+
+        if (tnow + time_epsilon >= next_net_upd) {
+
+            const std::size_t request_id = inference_count;
+            const double scheduled_timestamp = next_net_upd;
+
+            if (inference_count == 0) {
+                first_inference_ts = tnow;
+            }
+
+            last_inference_ts = tnow;
+
+            response_received = false;
+
+            was_detected = op_handler.update(
+                frame,
+                tnow,
+                detected_pose,
+                response_received
+            );
+
+            ++inference_count;
+
+            if (was_detected) {
                 filtered_pose = detected_pose.pose;
                 pose_initialised = true;
+                ++valid_inference_count;
             }
+
+            if (latency_file.is_open()) {
+                std::ostringstream row;
+
+                row << request_id
+                    << ","
+                    << std::fixed
+                    << std::setprecision(9)
+                    << tnow
+                    << ","
+                    << scheduled_timestamp
+                    << ",";
+
+                if (std::isnan(detected_pose.delay)) {
+                    row << "nan";
+                } else {
+                    row << std::setprecision(6)
+                        << detected_pose.delay * 1000.0;
+                }
+
+                row << ","
+                    << (response_received ? 1 : 0)
+                    << ","
+                    << (was_detected ? 1 : 0);
+
+                latency_buffer.push_back(row.str());
+            }
+
+            // Same scheduling policy as YOLOPose:
+            // skip nominal deadlines for which no RGB frame existed.
+            do {
+                next_net_upd += net_period;
+            } while (
+                next_net_upd <= tnow + time_epsilon
+            );
         }
 
         // CSV logging at output_period rate
@@ -392,6 +548,46 @@ int main(int argc, char *argv[]){
         }
         csv_file.close();
         yInfo() << "CSV rows written:" << csv_buffer.size() << "->" << output_csv;
+    }
+
+    if (latency_file.is_open()) {
+
+        for (const auto &line : latency_buffer)
+            latency_file << line << "\n";
+
+        latency_file.close();
+
+        yInfo()
+            << "Latency rows written:"
+            << latency_buffer.size()
+            << "->"
+            << latency_csv_path;
+    }
+
+    yInfo()
+        << "OpenPose inferences completed:"
+        << inference_count;
+
+    yInfo()
+        << "OpenPose valid inferences:"
+        << valid_inference_count;
+
+    yInfo()
+        << "Requested inference rate:"
+        << (1.0 / net_period)
+        << "Hz";
+
+    if (inference_count > 1 &&
+        last_inference_ts > first_inference_ts)
+    {
+        const double observed_rate =
+            static_cast<double>(inference_count - 1) /
+            (last_inference_ts - first_inference_ts);
+
+        yInfo()
+            << "Observed inference rate:"
+            << observed_rate
+            << "Hz";
     }
     power_monitor.stop();
     op_handler.close();
