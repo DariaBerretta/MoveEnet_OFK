@@ -118,7 +118,9 @@ public:
             return false;
 
         // ============================================================
-        // Caller-side preprocessing: EXCLUDED from measured latency
+        // Caller-side preprocessing:
+        // excluded from service latency measured inside update(),
+        // included in complete method latency measured by main().
         // ============================================================
 
         // OpenPose expects BGR
@@ -138,7 +140,7 @@ public:
             OP_CV2OPCONSTMAT(input_bgr);
 
         // ============================================================
-        // LATENCY START
+        // SERVICE LATENCY START
         // ============================================================
 
         const auto request_start =
@@ -230,7 +232,7 @@ public:
         previous_skeleton.timestamp = latest_ts;
 
         // ============================================================
-        // LATENCY END: usable skeleton available
+        // SERVICE LATENCY END: usable skeleton available
         // ============================================================
 
         const auto request_end =
@@ -366,7 +368,8 @@ int main(int argc, char *argv[]){
             << "request_id,"
             << "dataset_timestamp,"
             << "scheduled_timestamp,"
-            << "latency_ms,"
+            << "service_latency_ms,"
+            << "method_latency_ms,"
             << "response_received,"
             << "valid_pose\n";
 
@@ -460,6 +463,11 @@ int main(int argc, char *argv[]){
 
             response_received = false;
 
+            // Complete-method latency starts when the RGB frame is
+            // already available and OpenPose processing begins.
+            const auto method_start =
+                std::chrono::steady_clock::now();
+
             was_detected = op_handler.update(
                 frame,
                 tnow,
@@ -469,13 +477,28 @@ int main(int argc, char *argv[]){
 
             ++inference_count;
 
+            double method_latency_s =
+                std::numeric_limits<double>::quiet_NaN();
+
             if (was_detected) {
+
                 filtered_pose = detected_pose.pose;
                 pose_initialised = true;
+
+                // Complete OpenPose method output is now usable.
+                const auto method_end =
+                    std::chrono::steady_clock::now();
+
+                method_latency_s =
+                    std::chrono::duration<double>(
+                        method_end - method_start
+                    ).count();
+
                 ++valid_inference_count;
             }
 
             if (latency_file.is_open()) {
+
                 std::ostringstream row;
 
                 row << request_id
@@ -487,11 +510,22 @@ int main(int argc, char *argv[]){
                     << scheduled_timestamp
                     << ",";
 
-                if (std::isnan(detected_pose.delay)) {
-                    row << "nan";
-                } else {
+                // Internal OpenPose service latency
+                if (std::isfinite(detected_pose.delay)) {
                     row << std::setprecision(6)
                         << detected_pose.delay * 1000.0;
+                } else {
+                    row << "nan";
+                }
+
+                row << ",";
+
+                // Complete OpenPose method latency
+                if (std::isfinite(method_latency_s)) {
+                    row << std::setprecision(6)
+                        << method_latency_s * 1000.0;
+                } else {
+                    row << "nan";
                 }
 
                 row << ","
@@ -499,7 +533,9 @@ int main(int argc, char *argv[]){
                     << ","
                     << (was_detected ? 1 : 0);
 
-                latency_buffer.push_back(row.str());
+                latency_buffer.push_back(
+                    row.str()
+                );
             }
 
             // Same scheduling policy as YOLOPose:
