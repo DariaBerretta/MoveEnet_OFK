@@ -353,8 +353,10 @@ public:
         using Clock = std::chrono::steady_clock;
 
         // ============================================================
-        // LATENCY START
+        // SERVICE LATENCY START
         // The request Bottle and event payload are already prepared.
+        // Bottle construction is excluded from service latency but will
+        // be included in complete method latency measured by main().
         // ============================================================
         const auto request_start = Clock::now();
 
@@ -498,8 +500,8 @@ public:
         result.has_pose = true;
 
         // ============================================================
-        // LATENCY END:
-        // C++ now has a usable pose.
+        // SERVICE LATENCY END:
+        // C++ client now has a decoded usable pose.
         // ============================================================
         finishLatency();
 
@@ -744,7 +746,8 @@ int main(int argc, char *argv[])
             << "request_id,"
             << "dataset_timestamp,"
             << "scheduled_timestamp,"
-            << "latency_ms,"
+            << "service_latency_ms,"
+            << "method_latency_ms,"
             << "response_received,"
             << "valid_pose,"
             << "status,"
@@ -874,6 +877,11 @@ int main(int argc, char *argv[])
             last_request_ts = current_timestamp;
             ++request_count;
 
+            // Complete-method latency starts with the pending event batch
+            // already available, immediately before EventPointPose processing.
+            const auto method_start =
+                std::chrono::steady_clock::now();
+
             ServerReply reply = client.infer(
                 pending_batch,
                 current_timestamp,
@@ -886,6 +894,25 @@ int main(int argc, char *argv[])
                 reply.response_received &&
                 reply.status == "OK" &&
                 reply.has_pose;
+
+            double method_latency_s =
+                std::numeric_limits<double>::quiet_NaN();
+
+            // A complete method latency exists only when this request
+            // actually produces a new usable pose.
+            if (valid_pose) {
+
+                held_pose = reply.pose;
+                pose_initialised = true;
+
+                const auto method_end =
+                    std::chrono::steady_clock::now();
+
+                method_latency_s =
+                    std::chrono::duration<double>(
+                        method_end - method_start
+                    ).count();
+            }
 
             // ============================================================
             // ONE latency row per real service request.
@@ -906,6 +933,16 @@ int main(int argc, char *argv[])
                 if (std::isfinite(reply.pose.latency)) {
                     row << std::setprecision(6)
                         << reply.pose.latency * 1000.0;
+                } else {
+                    row << "nan";
+                }
+
+                row << ",";
+
+                // Complete EventPointPose method latency
+                if (std::isfinite(method_latency_s)) {
+                    row << std::setprecision(6)
+                        << method_latency_s * 1000.0;
                 } else {
                     row << "nan";
                 }
@@ -951,9 +988,6 @@ int main(int argc, char *argv[])
             pending_batch.clear();
 
             if (valid_pose) {
-
-                held_pose = reply.pose;
-                pose_initialised = true;
 
                 if (valid_inference_count == 0) {
                     first_valid_inference_ts = current_timestamp;
