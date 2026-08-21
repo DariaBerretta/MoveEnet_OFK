@@ -29,6 +29,7 @@
 #include <cstddef>
 #include <chrono>
 #include <limits>
+#include <cmath>
 
 #include "utils/power_monitor.h"
 #include "utils/visualization_utils.h"
@@ -225,7 +226,9 @@ public:
             return false;
         }
 
-        // ===== PREPROCESSING: excluded from latency =====
+        // ===== PREPROCESSING =====
+        // Excluded from service latency measured inside this function.
+        // Included in complete method latency measured by main().
         cv::Mat gray;
 
         if (latest_image.channels() == 3) {
@@ -245,7 +248,7 @@ public:
         ImageOf<PixelMono> &out_img = output_port.prepare();
         out_img.copy(yarp::cv::fromCvMat<PixelMono>(gray));
 
-        // ===== LATENCY START =====
+        // ===== SERVICE LATENCY START =====
         const auto request_start =
             std::chrono::steady_clock::now();
 
@@ -281,7 +284,7 @@ public:
 
         detected_skeleton.timestamp = frame_ts;
 
-        // ===== LATENCY END =====
+        // ===== SERVICE LATENCY END =====
         const auto request_end =
             std::chrono::steady_clock::now();
 
@@ -492,7 +495,8 @@ int main(int argc, char *argv[])
             << "request_id,"
             << "dataset_timestamp,"
             << "scheduled_timestamp,"
-            << "latency_ms,"
+            << "service_latency_ms,"
+            << "method_latency_ms,"
             << "response_received,"
             << "valid_pose\n";
 
@@ -661,7 +665,11 @@ int main(int argc, char *argv[])
 
             last_inference_ts = tnow;
             bool response_received = false;
-            
+
+            // Complete-method latency starts when the current RGB frame
+            // is available and YOLO processing for this update begins.
+            const auto method_start =
+                std::chrono::steady_clock::now();
 
             const bool valid_pose = yolo_handler.infer(
                 frame,
@@ -672,15 +680,30 @@ int main(int argc, char *argv[])
 
             ++inference_count;
 
+            double method_latency_s =
+                std::numeric_limits<double>::quiet_NaN();
+
             if (valid_pose) {
+
                 held_pose = detected_pose;
                 filtered_pose = detected_pose.pose;
                 pose_initialised = true;
+
+                // The complete YOLOPose output is now usable by the caller.
+                const auto method_end =
+                    std::chrono::steady_clock::now();
+
+                method_latency_s =
+                    std::chrono::duration<double>(
+                        method_end - method_start
+                    ).count();
+
                 ++valid_inference_count;
             }
 
-            // One row per actual network request.
+            // One row per actual YOLO request.
             if (latency_file.is_open()) {
+
                 std::ostringstream row;
 
                 row << request_id
@@ -692,11 +715,22 @@ int main(int argc, char *argv[])
                     << scheduled_timestamp
                     << ",";
 
-                if (std::isnan(detected_pose.delay)) {
-                    row << "nan";
-                } else {
+                // Internal YOLO service latency
+                if (std::isfinite(detected_pose.delay)) {
                     row << std::setprecision(6)
                         << detected_pose.delay * 1000.0;
+                } else {
+                    row << "nan";
+                }
+
+                row << ",";
+
+                // Complete YOLOPose method latency
+                if (std::isfinite(method_latency_s)) {
+                    row << std::setprecision(6)
+                        << method_latency_s * 1000.0;
+                } else {
+                    row << "nan";
                 }
 
                 row << ","
@@ -704,7 +738,9 @@ int main(int argc, char *argv[])
                     << ","
                     << (valid_pose ? 1 : 0);
 
-                latency_buffer.push_back(row.str());
+                latency_buffer.push_back(
+                    row.str()
+                );
             }
            
             // If YOLO returns an invalid pose, keep the previous valid pose.
