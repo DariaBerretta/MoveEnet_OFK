@@ -43,6 +43,7 @@ docker/.env
 !/moveEnetFlow/experiments/**/*.sh
 # unignore all .ipynb files in experiments folder and its subfolders
 !/moveEnetFlow/experiments/**/*.ipynb
+!/moveEnetFlow/experiments/**/*.py
 # Keep the experiments index under version control.
 !/moveEnetFlow/experiments/README.md
 
