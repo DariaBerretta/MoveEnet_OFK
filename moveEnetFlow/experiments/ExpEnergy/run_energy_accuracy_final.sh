@@ -6,7 +6,7 @@ set -Eeuo pipefail
 # Fixed operating points agreed for the paper:
 #   eH36M/H36M:
 #     MoveNet-only   net=0.020 s (50 Hz),  output=0.005 s (200 Hz)
-#     MoveEnetOFK    net=0.020 s (50 Hz),  flow=0.005 s (200 Hz), output=0.005 s
+#     MoveEnetOFK    net=0.200 s (5 Hz),   flow=0.005 s (200 Hz), output=0.005 s
 #     OpenPose       net=0.020 s (50 Hz),  output=0.005 s (200 Hz, ZOH)
 #     YOLOPose       net=0.020 s (50 Hz),  output=0.005 s (200 Hz, ZOH)
 #   DHP19:
@@ -54,6 +54,8 @@ GPU_INDEX="${GPU_INDEX:-0}"
 OUTPUT_PERIOD="0.005"
 FLOW_PERIOD="0.005"
 H36M_NET_PERIOD="0.02"
+H36M_MOVENET_NET_PERIOD="0.02"
+H36M_OFK_NET_PERIOD="0.05"
 DHP19_MOVENET_NET_PERIOD="0.005"
 DHP19_OFK_NET_PERIOD="0.2"
 DHP19_EPP_NET_PERIOD="0.005"
@@ -270,9 +272,11 @@ run_measured() {
         net_period="$H36M_NET_PERIOD"
         case "$model" in
             movenet)
+                net_period="$H36M_NET_PERIOD"
                 cmd=(docker exec "$CONTAINER" env VIRTUAL_ENV="$VENV_DIR" PATH="$VENV_DIR/bin:$CONTAINER_BASE_PATH" "$MOVENET_BIN" --data_file "$event_path" --net_period "$net_period" --flow_period "$FLOW_PERIOD" --output_period "$OUTPUT_PERIOD" --w 640 --h 480 --checkpoint_path "$H36M_MOVENET_CKPT" --device "$DEVICE" --moveenet_only --no_csv --no_video)
                 ;;
             moveenetofk)
+                net_period="$H36M_OFK_NET_PERIOD"
                 flow_period="$FLOW_PERIOD"
                 cmd=(docker exec "$CONTAINER" env VIRTUAL_ENV="$VENV_DIR" PATH="$VENV_DIR/bin:$CONTAINER_BASE_PATH" "$MOVENET_BIN" --data_file "$event_path" --net_period "$net_period" --flow_period "$FLOW_PERIOD" --output_period "$OUTPUT_PERIOD" --w 640 --h 480 --checkpoint_path "$H36M_MOVENET_CKPT" --device "$DEVICE" --no_csv --no_video)
                 ;;
