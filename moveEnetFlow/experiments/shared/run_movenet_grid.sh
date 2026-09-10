@@ -43,7 +43,7 @@ case "$PROFILE" in
     NETWORK_PERIODS=("0.02" "0.05" "0.1")
     FLOW_PERIODS=("0.005" "0.01" "0.02")
     RUN_MOVENET_ONLY="false"
-    OUTPUT_LAYOUT="net_fp"
+    OUTPUT_LAYOUT="fp_np"
     OUTPUT_OPTION="--output_csv"
     ;;
   *) echo "Unknown MOVENET_PROFILE: $PROFILE" >&2; exit 2 ;;
@@ -62,10 +62,12 @@ IMG_H=""
 OUTPUT_PERIOD="0.005"                   # CSV output sampling period, seconds
 DEVICE="cuda:0"
 
-# Kalman filter / OFK parameters
-PROC_U="0.77"
-MEAS_UD="0.06"
-MEAS_UV="0.97"
+# Kalman filter / OFK parameters.
+# Empty here because dataset-specific defaults are assigned below.
+# Command-line --pu/--muD/--muV can still override them.
+PROC_U=""
+MEAS_UD=""
+MEAS_UV=""
 ROI="20"
 
 # Feature flags
@@ -171,6 +173,9 @@ case "$DATASET" in
     IMG_W="${IMG_W:-640}"
     IMG_H="${IMG_H:-480}"
     DATA_GLOB="${DATA_GLOB:-*/ch0dvs/data.log}"
+    PROC_U="${PROC_U:-0.77}"
+    MEAS_UD="${MEAS_UD:-0.06}"
+    MEAS_UV="${MEAS_UV:-0.97}"
     DATASET_ARGS=()
     ;;
 
@@ -182,6 +187,9 @@ case "$DATASET" in
     IMG_W="${IMG_W:-346}"
     IMG_H="${IMG_H:-260}"
     DATA_GLOB="${DATA_GLOB:-*/ch*dvs/data.log}"
+    PROC_U="${PROC_U:-0.36}"
+    MEAS_UD="${MEAS_UD:-0.01}"
+    MEAS_UV="${MEAS_UV:-0.01}"
     DATASET_ARGS=(--dhp19)
     ;;
 
@@ -275,6 +283,10 @@ else
   echo "Data root      : $DATA_ROOT"
   echo "Data glob      : $DATA_GLOB"
 fi
+echo "KF pu           : $PROC_U"
+echo "KF muD          : $MEAS_UD"
+echo "KF muV          : $MEAS_UV"
+echo "KF ROI          : $ROI"
 echo "Network periods: ${NETWORK_PERIODS[*]}"
 echo "Flow periods   : ${FLOW_PERIODS[*]}"
 echo "Output period  : $OUTPUT_PERIOD"

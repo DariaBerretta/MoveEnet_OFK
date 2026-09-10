@@ -24,7 +24,7 @@ DATA_FILE=""                                                        # Optional s
 DEVICE="cuda:0"                                                     # OpenPose device (GPU required). Use e.g. cuda:0
 
 # Timing and processing parameters
-OUTPUT_PERIOD="0.02"                                              # CSV output sampling period in seconds (minimum 0.02)
+OUTPUT_PERIOD="0.005"                                             # held-pose output at 200 Hz
 IMG_W="640"                                                        # Event camera image width in pixels
 IMG_H="480"                                                        # Event camera image height in pixels
 
@@ -67,11 +67,9 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if awk "BEGIN{exit !($OUTPUT_PERIOD >= 0.02)}"; then
-  : # ok
-else
-  echo "Pose runner cannot log faster than 0.02s per row; clamping output_period to 0.02" >&2
-  OUTPUT_PERIOD="0.02"
+if ! awk "BEGIN{exit !($OUTPUT_PERIOD > 0.0)}"; then
+  echo "output_period must be positive" >&2
+  exit 1
 fi
 
 if [[ ! -x "$BINARY" ]]; then
