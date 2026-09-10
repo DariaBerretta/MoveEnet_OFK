@@ -1,5 +1,7 @@
 // OpenPose offline runner.
-// Outout CSV bounded at 50Hz, .mp4 frame rate
+// OpenPose inference and pose output are independently scheduled.
+// Between inferences the latest valid pose is held with zero-order hold,
+// allowing e.g. 50 Hz inference with 200 Hz pose output.
 
 #include <yarp/os/all.h>
 #include <yarp/cv/Cv.h>                     // needed for yarp::cv::fromCvMat
@@ -404,13 +406,14 @@ int main(int argc, char *argv[]){
 
     // ===== INITIALIZE ALGORITHMIC COMPONENTS =====
     hpecore::stampedPose detected_pose;                 // Detected pose from OpenPose
-    hpecore::skeleton13 filtered_pose{};                // Last known filtered pose 
+    hpecore::skeleton13 filtered_pose{};                // Last known filtered pose
     bool pose_initialised = false;                      // True after first valid detection
+    double held_pose_latency = 0.0;                     // Latency of inference that produced held pose
 
     double tnow = 0.0;                                  // Current simulation time
     double next_net_upd = 0.0;                         // time threshold for next OpenPose call
-    double next_csv_upd = output_period;               // time threshold for next CSV row
-    double next_vis_upd = output_period;               // time threshold for next visualization frame
+    double next_output_ts = 0.0;                       // independent held-pose output schedule
+    bool schedules_initialised = false;
 
     std::size_t inference_count = 0;
     std::size_t valid_inference_count = 0;
@@ -425,8 +428,47 @@ int main(int argc, char *argv[]){
     // ===== MAIN PROCESSING LOOP (frame-by-frame) =====
 
     int frame_count = 0;
+    bool stop_requested = false;
+    cv::Mat previous_frame;
 
-    while (true) {
+    // Emit one held-pose sample at an exact scheduled dataset timestamp.
+    // Before the first valid OpenPose result there is no pose to hold.
+    auto emit_output = [&](double output_ts, const cv::Mat &visual_frame) -> bool {
+        if (!pose_initialised) {
+            return false;
+        }
+
+        if (csv_file.is_open()) {
+            std::ostringstream row;
+            row << std::fixed << std::setprecision(6) << output_ts;
+            row << "," << held_pose_latency;
+            for (int j = 0; j < 13; ++j) {
+                row << "," << filtered_pose[j].u
+                    << "," << filtered_pose[j].v;
+            }
+            csv_buffer.push_back(row.str());
+        }
+
+        if ((is_visualize || (!output_video.empty() && !no_video)) &&
+            !visual_frame.empty()) {
+            renderVisualizationFrameOP(
+                vis_ctx,
+                visual_frame,
+                pose_initialised,
+                filtered_pose,
+                detected_pose,
+                output_ts
+            );
+            writeVisualizationFrame(vis_ctx, pose_initialised);
+            if (showVisualizationFrame(vis_ctx)) {
+                yInfo() << "User requested stop";
+                return true;
+            }
+        }
+        return false;
+    };
+
+    while (!stop_requested) {
 
         // Read next frame
         cv::Mat frame;
@@ -436,6 +478,29 @@ int main(int argc, char *argv[]){
         }
         tnow = cap.get(cv::CAP_PROP_POS_MSEC) / 1000.0; // Convert ms to seconds
         frame_count++;
+
+        if (!schedules_initialised) {
+            next_net_upd = tnow;
+            next_output_ts = tnow;
+            schedules_initialised = true;
+        }
+
+        // Outputs strictly before this RGB frame must use only the pose and
+        // image that were available before this frame arrived.
+        const cv::Mat &held_visual_frame =
+            previous_frame.empty() ? frame : previous_frame;
+
+        while (next_output_ts < tnow - 1e-9) {
+            if (emit_output(next_output_ts, held_visual_frame)) {
+                stop_requested = true;
+                break;
+            }
+            next_output_ts += output_period;
+        }
+
+        if (stop_requested) {
+            break;
+        }
 
         // Send frame to OpenPose at net_period intervals
         bool was_detected = false;
@@ -484,6 +549,7 @@ int main(int argc, char *argv[]){
 
                 filtered_pose = detected_pose.pose;
                 pose_initialised = true;
+                held_pose_latency = detected_pose.delay;
 
                 // Complete OpenPose method output is now usable.
                 const auto method_end =
@@ -547,31 +613,18 @@ int main(int argc, char *argv[]){
             );
         }
 
-        // CSV logging at output_period rate
-        if (tnow >= next_csv_upd) {
-            next_csv_upd += output_period;
-            if (pose_initialised && csv_file.is_open()) {
-                std::ostringstream row;
-                row << std::fixed << std::setprecision(6) << tnow;
-                double lat = (detected_pose.timestamp > 0) ? detected_pose.delay : 0.0;
-                row << "," << lat;
-                for (int j = 0; j < 13; j++) {
-                    row << "," << filtered_pose[j].u << "," << filtered_pose[j].v;
-                }
-                csv_buffer.push_back(row.str());
-            }
-        }
-
-        // Visualization
-        if ((is_visualize || (!output_video.empty() && !no_video)) && tnow >= next_vis_upd) {
-            next_vis_upd += output_period;
-            renderVisualizationFrameOP(vis_ctx, frame, pose_initialised, filtered_pose, detected_pose, tnow);
-            writeVisualizationFrame(vis_ctx, pose_initialised);
-            if (showVisualizationFrame(vis_ctx)) {
-                yInfo() << "User requested stop";
+        // Outputs coincident with the current frame timestamp are emitted
+        // after a possible inference, so the new prediction becomes valid
+        // exactly from its own acquisition timestamp onward.
+        while (next_output_ts <= tnow + 1e-9) {
+            if (emit_output(next_output_ts, frame)) {
+                stop_requested = true;
                 break;
             }
+            next_output_ts += output_period;
         }
+
+        previous_frame = frame.clone();
 
 
     }
