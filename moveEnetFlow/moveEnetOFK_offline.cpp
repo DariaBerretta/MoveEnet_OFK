@@ -288,6 +288,12 @@ int main(int argc, char *argv[]){
     double measUV = rf.check("muV", Value(default_measUV)).asFloat64();                             // Measurement uncertainty (velocity)
     int roiSize = rf.check("roi", Value(20)).asInt32();                                             // ROI size for velocity estimation
 
+    yInfo() << "KF parameters:"
+        << "pu =" << procU
+        << "muD =" << measUD
+        << "muV =" << measUV
+        << "dataset =" << (use_dhp19_size ? "DHP19" : "eH36M");
+
     bool latency_compensation = rf.check("use_lc", Value(true)).asBool();                          // Latency compensation flag
     bool is_visualize = rf.check("vis");                                                            // Visualization flag
     std::string output_csv_f = rf.check("output_csv_f", Value("/tmp/output.csv")).asString();
