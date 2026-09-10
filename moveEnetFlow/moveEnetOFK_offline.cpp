@@ -277,9 +277,15 @@ int main(int argc, char *argv[]){
         movenet_res = res;
     }
 
-    double procU = rf.check("pu", Value(0.77)).asFloat64();                                         // Process uncertainty
-    double measUD = rf.check("muD", Value(0.06)).asFloat64();                                       // Measurement uncertainty (position)
-    double measUV = rf.check("muV", Value(0.97)).asFloat64();                                       // Measurement uncertainty (velocity)
+    // Dataset-specific Kalman filter defaults.
+    // Explicit command-line values (--pu, --muD, --muV) always override them.
+    const double default_procU  = use_dhp19_size ? 0.36 : 0.77;
+    const double default_measUD = use_dhp19_size ? 0.01 : 0.06;
+    const double default_measUV = use_dhp19_size ? 0.01 : 0.97;
+
+    double procU = rf.check("pu", Value(default_procU)).asFloat64();                                // Process uncertainty
+    double measUD = rf.check("muD", Value(default_measUD)).asFloat64();                             // Measurement uncertainty (position)
+    double measUV = rf.check("muV", Value(default_measUV)).asFloat64();                             // Measurement uncertainty (velocity)
     int roiSize = rf.check("roi", Value(20)).asInt32();                                             // ROI size for velocity estimation
 
     bool latency_compensation = rf.check("use_lc", Value(true)).asBool();                          // Latency compensation flag
