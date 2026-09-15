@@ -40,11 +40,11 @@ case "$PROFILE" in
     EXP_DIR="$EXPERIMENTS_DIR/expB_accuracy_vs_flow_period"
     DATASET="eh36m"
     BINARY="/workspace/moveEnetFlow/build/moveEnetOFK_offline"
-    NETWORK_PERIODS=("0.02" "0.05" "0.1")
-    FLOW_PERIODS=("0.005" "0.01" "0.02")
+    NETWORK_PERIODS=("0.01")
+    FLOW_PERIODS=("0.01" "0.02")
     RUN_MOVENET_ONLY="false"
     OUTPUT_LAYOUT="fp_np"
-    OUTPUT_OPTION="--output_csv"
+    OUTPUT_OPTION="--output_csv_f"
     ;;
   *) echo "Unknown MOVENET_PROFILE: $PROFILE" >&2; exit 2 ;;
 esac
