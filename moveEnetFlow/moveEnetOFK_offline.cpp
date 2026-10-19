@@ -44,6 +44,7 @@
 #include <hpe-core/fusion.h>                // For hpecore::multiJointLatComp
 #include <hpe-core/representations.h>       // For hpecore::SAE
 #include <algorithm>
+#include <cmath>
 #include <cctype>
 #include <fstream>
 #include <iomanip>
@@ -51,7 +52,6 @@
 #include <sstream>
 #include <unistd.h>
 #include <cstdlib>
-#include <chrono>
 #include "utils/power_monitor.h"
 
 static std::string shellQuote(const std::string &s)
@@ -85,7 +85,7 @@ using yarp::os::Value;
 class offlineDetector
 {
 private:
-    // double period{0.001};  // Minimum interval between requests (sec) and last send timestamp
+    double period{0.001};  // Minimum interval between requests (sec) and last send timestamp
     cv::Size sensor_size;  // Logical image size used by the C++ pipeline
     cv::Size movenet_frame_size;  // Image size sent through YARP to MoveNet
 
@@ -103,7 +103,7 @@ public:
      * @param transport_size Size of the image sent to MoveNet over YARP
      * @return true if both ports opened successfully and rate was valid
      */
-    bool init(std::string output_name, std::string input_name, /*double rate,*/
+    bool init(std::string output_name, std::string input_name, double rate,
               const cv::Size &logical_size, const cv::Size &transport_size)
     {
         if (!output_port.open(output_name))
@@ -112,10 +112,10 @@ public:
         if (!input_port.open(input_name))
             return false;
 
-        // if (rate <= 0.0)
-        //     return false;
+        if (rate <= 0.0)
+            return false;
 
-        // period = 1.0 / rate;
+        period = 1.0 / rate;
         sensor_size = logical_size;
         movenet_frame_size = transport_size;
         return true;
@@ -151,6 +151,7 @@ public:
         cv::GaussianBlur(cv_image, cv_image, cv::Size(5, 5), 0, 0);
 
         cv::Mat frame_to_send = cv_image;
+        bool resized_to_model = false;
         if (movenet_frame_size.area() > 0 && movenet_frame_size != cv_image.size()) {
             if (cv_image.cols <= movenet_frame_size.width && cv_image.rows <= movenet_frame_size.height) {
                 padded_image = cv::Mat::zeros(movenet_frame_size, CV_8U);
@@ -159,17 +160,14 @@ public:
             } else {
                 cv::resize(cv_image, padded_image, movenet_frame_size, 0, 0, cv::INTER_AREA);
                 frame_to_send = padded_image;
+                resized_to_model = true;
             }
         }
 
         output_port.prepare().copy(yarp::cv::fromCvMat<PixelMono>(frame_to_send));
-
-        // Start latency measurement immediately before submitting the request.
-        const auto request_start = std::chrono::steady_clock::now();
-
         output_port.write();
 
-        // const double req_wall_ts = yarp::os::Time::now();           // Timestamp when request was sent (for latency measurement)
+        const double req_wall_ts = yarp::os::Time::now();           // Timestamp when request was sent (for latency measurement)
 
         // wait (blocking) for MoveNet response, then populate the stamped pose
         Bottle *mn_container = input_port.read(true);
@@ -178,19 +176,20 @@ public:
             previous_skeleton.pose = hpecore::extractSkeletonFromYARP<Bottle>(*mn_container);
             previous_skeleton.conf = hpecore::extractConfidenceFromYARP<Bottle>(*mn_container);
             previous_skeleton.timestamp = latest_ts;
-            // previous_skeleton.delay = yarp::os::Time::now() - req_wall_ts;
+            previous_skeleton.delay = yarp::os::Time::now() - req_wall_ts;
 
             if (sensor_size.area() > 0 && movenet_frame_size.area() > 0 && sensor_size != movenet_frame_size) {
+                // If the image was resized, express the detected joints in the
+                // original event-camera coordinates used by EROS, SAE and OFK.
+                const float scale_x = resized_to_model
+                    ? static_cast<float>(sensor_size.width) / movenet_frame_size.width : 1.0f;
+                const float scale_y = resized_to_model
+                    ? static_cast<float>(sensor_size.height) / movenet_frame_size.height : 1.0f;
                 for (auto &joint : previous_skeleton.pose) {
-                    joint.u = std::clamp(joint.u, 0.0f, static_cast<float>(sensor_size.width - 1));
-                    joint.v = std::clamp(joint.v, 0.0f, static_cast<float>(sensor_size.height - 1));
+                    joint.u = std::clamp(joint.u * scale_x, 0.0f, static_cast<float>(sensor_size.width - 1));
+                    joint.v = std::clamp(joint.v * scale_y, 0.0f, static_cast<float>(sensor_size.height - 1));
                 }
             }
-
-            // Prediction is now completely available to the C++ pipeline.
-            const auto request_end = std::chrono::steady_clock::now();
-
-            previous_skeleton.delay = std::chrono::duration<double>( request_end - request_start ).count();
         }
 
         return mn_container != nullptr;
@@ -220,6 +219,8 @@ int main(int argc, char *argv[]){
         ss << std::left << std::setw(20) << "--w" << std::setw(12) << "<int>" << ": width of image\n";
         ss << std::left << std::setw(20) << "--dhp19" << std::setw(12) << ""
             << ": use DHP19 sensor size (346x260); pad MoveNet transport to 352x260\n";
+        ss << std::left << std::setw(20) << "--moveiit" << std::setw(12) << ""
+            << ": move-iit-hpe ATIS (1280x720), MoveNet input 640x480\n";
         ss << std::left << std::setw(20) << "--pu" << std::setw(12) << "<double>" << ": KF process uncertainty\n";
         ss << std::left << std::setw(20) << "--muD" << std::setw(12) << "<double>" << ": KF measurement uncertainty (position)\n";
         ss << std::left << std::setw(20) << "--muV" << std::setw(12) << "<double>" << ": KF measurement uncertainty (velocity)\n";
@@ -227,7 +228,6 @@ int main(int argc, char *argv[]){
         ss << std::left << std::setw(20) << "--use_lc" << std::setw(12) << "<bool>" << ": use latency compensation in KF\n";
         ss << std::left << std::setw(20) << "--vis" << std::setw(12) << "" << ": enable on-screen visualization\n";
         ss << std::left << std::setw(20) << "--output_csv_f" << std::setw(12) << "<string>" << ": path to output csv file\n";
-        ss << std::left << std::setw(20) << "--latency_csv" << std::setw(12) << "<string>" << ": per-inference MoveNet latency CSV\n";
         ss << std::left << std::setw(20) << "--include_velocities" << std::setw(12) << "" << ": when eval_format is set, also log velocities\n";
         ss << std::left << std::setw(20) << "--no_csv" << std::setw(12) << "" << ": skip CSV logging\n";
         ss << std::left << std::setw(20) << "--output_video" << std::setw(12) << "<string>"
@@ -255,9 +255,13 @@ int main(int argc, char *argv[]){
     double net_period = rf.check("net_period", Value(0.05)).asFloat64();                            // Range from 5ms to 100ms -> 200 Hz to 10 Hz   
     double flow_period = rf.check("flow_period", Value(0.005)).asFloat64();                         // Range from 5ms to 100ms -> 200 Hz to 10 Hz
     bool moveenet_only = rf.check("moveenet_only");                                                  // If true, skip optical-flow/KF velocity update
-    bool use_dhp19_size = rf.check("dhp19");                                    // Accept common typo as an alias
-    std::string latency_csv_path = rf.check("latency_csv", Value("")).asString();
-
+    bool use_dhp19_size = rf.check("dhp19");
+    bool use_moveiit_size = rf.check("moveiit");
+    if (use_dhp19_size && use_moveiit_size) {
+        yError() << "--dhp19 and --moveiit are mutually exclusive";
+        return -1;
+    }
+    
     cv::Size res;          // Actual sensor/event-surface resolution
     cv::Size movenet_res;  // Image resolution transported through YARP
 
@@ -268,6 +272,12 @@ int main(int argc, char *argv[]){
         // The six extra columns are zero padding on the right.
         movenet_res = cv::Size(352, 260);
     }
+    else if (use_moveiit_size) {
+        // Native ATIS resolution. Only the image sent to MoveNet is resized;
+        // optical flow and the final predicted joints use native coordinates.
+        res = cv::Size(1280, 720);
+        movenet_res = cv::Size(640, 480);
+    }
     else {
         res = cv::Size(
             rf.check("w", Value(640)).asInt32(),
@@ -277,22 +287,10 @@ int main(int argc, char *argv[]){
         movenet_res = res;
     }
 
-    // Dataset-specific Kalman filter defaults.
-    // Explicit command-line values (--pu, --muD, --muV) always override them.
-    const double default_procU  = use_dhp19_size ? 0.36 : 0.77;
-    const double default_measUD = use_dhp19_size ? 0.01 : 0.06;
-    const double default_measUV = use_dhp19_size ? 0.01 : 0.97;
-
-    double procU = rf.check("pu", Value(default_procU)).asFloat64();                                // Process uncertainty
-    double measUD = rf.check("muD", Value(default_measUD)).asFloat64();                             // Measurement uncertainty (position)
-    double measUV = rf.check("muV", Value(default_measUV)).asFloat64();                             // Measurement uncertainty (velocity)
+    double procU = rf.check("pu", Value(0.77)).asFloat64();                                         // Process uncertainty
+    double measUD = rf.check("muD", Value(0.06)).asFloat64();                                       // Measurement uncertainty (position)
+    double measUV = rf.check("muV", Value(0.97)).asFloat64();                                       // Measurement uncertainty (velocity)
     int roiSize = rf.check("roi", Value(20)).asInt32();                                             // ROI size for velocity estimation
-
-    yInfo() << "KF parameters:"
-        << "pu =" << procU
-        << "muD =" << measUD
-        << "muV =" << measUV
-        << "dataset =" << (use_dhp19_size ? "DHP19" : "eH36M");
 
     bool latency_compensation = rf.check("use_lc", Value(true)).asBool();                          // Latency compensation flag
     bool is_visualize = rf.check("vis");                                                            // Visualization flag
@@ -303,7 +301,7 @@ int main(int argc, char *argv[]){
     bool no_video = rf.check("no_video");
     
     //std::string powerjoular_file = rf.check("pwrjlr_file", Value("/tmp/powerjoular.csv")).asString();
-    std::string gpu_monitor_file = rf.check("gpu_file", Value("")).asString();
+    std::string gpu_monitor_file = rf.check("gpu_file", Value("/tmp/gpu_monitor.csv")).asString();
     int gpu_monitor_period_ms = rf.check("gpu_period_ms", Value(5)).asInt32();
     int gpu_monitor_index = rf.check("gpu_index", Value(0)).asInt32();
     std::string device = rf.check("device", Value("cuda:0")).asString();
@@ -331,10 +329,6 @@ int main(int argc, char *argv[]){
     // Prepare CSV, video, and visualization resources
     std::ofstream csv_file;                             // CSV file stream for logging results
     std::vector<std::string> csv_buffer;                // store rows for deferred write
-
-    std::ofstream latency_file;
-    std::vector<std::string> latency_buffer;
-
     VisualizationContext vis_ctx;                      // Visualization and video writer resources
 
     // CSV writer setup
@@ -356,29 +350,6 @@ int main(int argc, char *argv[]){
         }
         csv_file << "\n";
         csv_file.flush();
-    }
-
-    if (!latency_csv_path.empty()) {
-        latency_file.open(latency_csv_path);
-
-        if (!latency_file.is_open()) {
-            yError() << "Could not open latency CSV:"
-                    << latency_csv_path;
-            return -1;
-        }
-
-        latency_file
-            << "request_id,"
-            << "dataset_timestamp,"
-            << "scheduled_timestamp,"
-            << "service_latency_ms,"
-            << "method_latency_ms,"
-            << "response_received,"
-            << "valid_pose,"
-            << "fusion_dataset_timestamp\n";
-
-        yInfo() << "Per-inference latency logging enabled ->"
-                << latency_csv_path;
     }
 
     // Visualization and video setup, calls utils/visualization_utils.cpp
@@ -421,7 +392,7 @@ int main(int argc, char *argv[]){
     }
 
     // Detection frequency detF derived from moveEnet update period
-    // double detF = 1.0 / net_period;                     // Detection frequency in Hz of MoveNet
+    double detF = 1.0 / net_period;                     // Detection frequency in Hz of MoveNet
     double tnow = 0.0;                                  // Current simulation time
     double next_net_upd = 0.0;                          // event-time threshold for next MoveNet call
     double next_flow_upd = 0.0;                         // event-time threshold for next OF+KF update
@@ -437,6 +408,19 @@ int main(int argc, char *argv[]){
         yInfo() << eloader.getinfo();
     }
 
+    // offlineLoader preserves the absolute recording timestamps. Its public
+    // iterator works with the event-driven version installed in the container.
+    // After load(), begin() and end() are initially equal because no read
+    // window has been requested yet; that equality does not mean the file is empty.
+    const double event_start_ts = eloader.begin().timestamp();
+    if (!std::isfinite(event_start_ts)) {
+        yError() << "Invalid event start timestamp";
+        return -1;
+    }
+    // YARP LogStream does not support std::fixed/std::setprecision directly.
+    std::ostringstream start_time_stream;
+    start_time_stream << std::fixed << std::setprecision(6) << event_start_ts;
+    yInfo() << "First event timestamp (absolute):" << start_time_stream.str();
 
     // Open and connect to YARP
     if(!yarp::os::Network::checkNetwork()) {
@@ -476,7 +460,7 @@ int main(int argc, char *argv[]){
     yInfo() << "MoveEnet started correctly";
 
     // Init detector ports
-    mn_handler.init(eros_out, movenet_in, /*detF,*/ res, movenet_res);
+    mn_handler.init(eros_out, movenet_in, detF, res, movenet_res);
     yarp::os::Network::connect("/movenet/sklt:o", movenet_in, "fast_tcp");
     yarp::os::Network::connect(eros_out, "/movenet/img:i", "fast_tcp");
 
@@ -485,24 +469,10 @@ int main(int argc, char *argv[]){
     // ===== MAIN PROCESSING LOOP (packet-by-packet) =====
 
     const double packet_eps = 1e-6;             // minimal increment to advance loader cursor
-    double next_packet_ts = 0.0;                // start from t=0; loader will advance on first increment
+    double next_packet_ts = event_start_ts + packet_eps; // input timestamps may be absolute
     int batch_count = 0;
+    std::size_t out_of_bounds_events = 0;
     bool pending_detection = false;             // true when a new MoveNet result is waiting to correct the KF
-
-    // Pending complete-method latency for MoveEnetOFK
-    bool pending_method_latency = false;
-
-    std::size_t pending_request_id = 0;
-
-    double pending_dataset_timestamp = 0.0;
-    double pending_scheduled_timestamp = 0.0;
-
-    double pending_service_latency_s =
-        std::numeric_limits<double>::quiet_NaN();
-
-    std::chrono::steady_clock::time_point pending_method_start;
-
-
     hpecore::skeleton13 jvs;                    // last known joint velocities (persistent across iterations)
     hpecore::skeleton13 filtered_pose;          // last known filtered pose (persistent across iterations)
 
@@ -510,15 +480,6 @@ int main(int argc, char *argv[]){
     bool movenet_pose_available = false;
     hpecore::skeleton13 movenet_only_pose;
     double movenet_only_latency = 0.0;
-
-
-    // For latency logging
-    std::size_t inference_count = 0;
-    std::size_t valid_inference_count = 0;
-    std::size_t request_id = 0;
-
-    double first_inference_ts = -1.0;
-    double last_inference_ts = -1.0;
 
     while (true) {
         
@@ -534,7 +495,7 @@ int main(int argc, char *argv[]){
         }
 
         const double packet_ts = eloader.begin().timestamp();
-        tnow = packet_ts;
+        tnow = packet_ts - event_start_ts; // relative seconds for the KF, SAE and output CSV
         
         bool was_detected = false;
         bool did_flow_update = false;
@@ -543,6 +504,10 @@ int main(int argc, char *argv[]){
         // Update EROS/SAE using exactly one packet of events
         int event_count = 0;
         for(ev::offlineLoader<ev::AE>::iterator v = eloader.begin(); v != eloader.end(); v++){
+            if (static_cast<int>(v->x) >= res.width || static_cast<int>(v->y) >= res.height) {
+                ++out_of_bounds_events;
+                continue;
+            }
             eros.update(v->x, v->y);
             sae_handler.update(v->x, v->y, tnow);
             event_count++;
@@ -564,136 +529,19 @@ int main(int argc, char *argv[]){
         //     if (was_detected && hpecore::poseNonZero(detected_pose.pose))
         //         pending_detection = true;  // latch until the next flow update consumes it
         // }
-
-        // Latency computation introduction
-        // if (tnow >= next_net_upd) {
-        //     next_net_upd = net_period + tnow;
-
-        //     was_detected = mn_handler.update(eros.getSurface(), tnow, detected_pose);
-
-        //     if (was_detected && hpecore::poseNonZero(detected_pose.pose)) {
-        //         if (moveenet_only) {
-        //             movenet_only_pose = detected_pose.pose;
-        //             movenet_only_latency = detected_pose.delay;
-        //             movenet_pose_available = true;
-        //         } else {
-        //             pending_detection = true;
-        //         }
-        //     }
-        // }
         if (tnow >= next_net_upd) {
-
-            // Keep the threshold that triggered this request for diagnostics.
-            const double scheduled_timestamp = next_net_upd;
-
-            // Preserve the original relative scheduling semantics.
             next_net_upd = net_period + tnow;
 
-            if (inference_count == 0) {
-                first_inference_ts = tnow;
-            }
+            was_detected = mn_handler.update(eros.getSurface(), tnow, detected_pose);
 
-            last_inference_ts = tnow;
-
-            const std::size_t current_request_id = request_id++;
-
-            const auto method_start = std::chrono::steady_clock::now();
-
-            was_detected = mn_handler.update(
-                eros.getSurface(),
-                tnow,
-                detected_pose
-            );
-
-            ++inference_count;
-
-            const bool valid_pose =
-                was_detected &&
-                hpecore::poseNonZero(detected_pose.pose);
-
-            double method_latency_s =
-                std::numeric_limits<double>::quiet_NaN();
-
-            if (valid_pose) {
-                ++valid_inference_count;
-
+            if (was_detected && hpecore::poseNonZero(detected_pose.pose)) {
                 if (moveenet_only) {
                     movenet_only_pose = detected_pose.pose;
                     movenet_only_latency = detected_pose.delay;
                     movenet_pose_available = true;
-
-                    const auto method_end =
-                        std::chrono::steady_clock::now();
-
-                    method_latency_s =
-                        std::chrono::duration<double>(
-                            method_end - method_start
-                        ).count();
                 } else {
                     pending_detection = true;
-
-                    // Keep timing information until this detection is
-                    // actually incorporated into the OF+KF output.
-                    pending_method_latency = true;
-
-                    pending_request_id =
-                        current_request_id;
-
-                    pending_dataset_timestamp =
-                        tnow;
-
-                    pending_scheduled_timestamp =
-                        scheduled_timestamp;
-
-                    pending_service_latency_s =
-                        detected_pose.delay;
-
-                    pending_method_start =
-                        method_start;
                 }
-            }
-
-            // Exactly one row for every actual MoveNet request.
-            if (latency_file.is_open() && moveenet_only) {
-
-                std::ostringstream latency_row;
-
-                latency_row
-                    << current_request_id << ","
-                    << std::fixed << std::setprecision(9)
-                    << tnow << ","
-                    << scheduled_timestamp << ",";
-
-                // Internal/model-service latency
-                if (was_detected) {
-                    latency_row
-                        << std::setprecision(6)
-                        << detected_pose.delay * 1000.0;
-                } else {
-                    latency_row << "nan";
-                }
-
-                latency_row << ",";
-
-                // Complete-method latency
-                if (std::isfinite(method_latency_s)) {
-                    latency_row
-                        << std::setprecision(6)
-                        << method_latency_s * 1000.0;
-                } else {
-                    latency_row << "nan";
-                }
-
-                latency_row
-                    << "," << (was_detected ? 1 : 0)
-                    << "," << (valid_pose ? 1 : 0)
-                    << ","
-                    << std::fixed << std::setprecision(9)
-                    << tnow;
-
-                latency_buffer.push_back(
-                    latency_row.str()
-                );
             }
         }
 
@@ -702,7 +550,6 @@ int main(int argc, char *argv[]){
         if (!moveenet_only && tnow >= next_flow_upd) {
             next_flow_upd = flow_period + tnow;
             did_flow_update = true;
-            bool consumed_detection = false;
 
             // 1. Use latest valid MoveNet pose, if available, to initialize/correct KF
             if (pending_detection) {
@@ -713,7 +560,6 @@ int main(int argc, char *argv[]){
                 }
 
                 pending_detection = false;
-                consumed_detection = true;
             }
 
             // If no KF state exists yet, no fusion step can be performed
@@ -738,61 +584,7 @@ int main(int argc, char *argv[]){
 
             // 5. Query KF state for output
             filtered_pose = state.query();
-
-            // 6. If a MoveNet detection was consumed, log the latency information
-            if (consumed_detection && pending_method_latency) {
-
-                const auto method_end =
-                    std::chrono::steady_clock::now();
-
-                const double method_latency_s =
-                    std::chrono::duration<double>(
-                        method_end - pending_method_start
-                    ).count();
-
-                if (latency_file.is_open()) {
-
-                    std::ostringstream latency_row;
-
-                    latency_row
-                        << pending_request_id << ","
-                        << std::fixed << std::setprecision(9)
-                        << pending_dataset_timestamp << ","
-                        << pending_scheduled_timestamp << ",";
-
-                    // Internal MoveNet service latency
-                    if (std::isfinite(pending_service_latency_s)) {
-                        latency_row
-                            << std::setprecision(6)
-                            << pending_service_latency_s * 1000.0;
-                    } else {
-                        latency_row << "nan";
-                    }
-
-                    // Complete MoveEnetOFK method latency
-                    latency_row
-                        << ","
-                        << std::setprecision(6)
-                        << method_latency_s * 1000.0
-
-                        // A pending OFK latency exists only for a valid
-                        // MoveNet prediction, therefore both are guaranteed.
-                        << ",1"   // response_received
-                        << ",1"   // valid_pose
-
-                        // Dataset time at which OF+KF produced the fused pose
-                        << ","
-                        << std::fixed << std::setprecision(9)
-                        << tnow;
-
-                    latency_buffer.push_back(
-                        latency_row.str()
-                    );
-                }
-
-                pending_method_latency = false;
-            }
-                    }
+        }
 
 
         // // FIRST VERSION:
@@ -905,36 +697,6 @@ int main(int argc, char *argv[]){
 
     }
 
-    yInfo()
-        << "MoveNet inference requests:"
-        << inference_count;
-
-    yInfo()
-        << "MoveNet valid predictions:"
-        << valid_inference_count;
-
-    if (inference_count > 1 &&
-        last_inference_ts > first_inference_ts)
-    {
-        const double observed_inference_rate =
-            static_cast<double>(
-                inference_count - 1
-            ) /
-            (last_inference_ts -
-            first_inference_ts);
-
-        yInfo()
-            << "Requested MoveNet inference rate:"
-            << 1.0 / net_period
-            << "Hz";
-
-        yInfo()
-            << "Observed MoveNet inference rate:"
-            << observed_inference_rate
-            << "Hz";
-    }
-
-
 
     // Cleanup
     if (csv_file.is_open()) {
@@ -944,20 +706,9 @@ int main(int argc, char *argv[]){
         csv_file.close();
         yInfo() << "CSV rows written:" << csv_buffer.size() << "->" << output_csv_f;
     }
-
-    if (latency_file.is_open()) {
-        for (const auto &line : latency_buffer) {
-            latency_file << line << "\n";
-        }
-
-        latency_file.close();
-
-        yInfo() << "Latency rows written:"
-                << latency_buffer.size()
-                << "->"
-                << latency_csv_path;
+    if (out_of_bounds_events > 0) {
+        yWarning() << "Skipped out-of-bounds events:" << out_of_bounds_events;
     }
-
     power_monitor.stop();
     mn_handler.close();
     yarp::os::Network::disconnect("/movenet/sklt:o", movenet_in, "fast_tcp");
