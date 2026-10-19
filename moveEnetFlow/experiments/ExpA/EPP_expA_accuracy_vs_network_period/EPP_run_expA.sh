@@ -25,7 +25,7 @@ RESULT_DIR="$RESULTS_ROOT/EPP_dhp19_full_test"
 # -----------------------------------------------------------------------------
 # Defaults
 # -----------------------------------------------------------------------------
-BINARY="/workspace/moveEnetFlow/build2/eventPointPose_offline"
+BINARY="/workspace/moveEnetFlow/build/eventPointPose_offline"
 
 DATA_FILE=""
 DATA_ROOT="/data/dhp19_testing_set_S13toS17"
@@ -34,13 +34,13 @@ DATA_GLOB="*/ch[23]dvs/data.log"
 MODEL_PATH="/workspace/model_mounts/eventpointpose/PointNet/models/model.pth"
 EPP_SCRIPT="/workspace/model_mounts/eventpointpose/PointNet/models/eventPointPose_yarp_server.py"
 
-RAW_DIR="$RESULT_DIR/results/raw"
-LOG_DIR="$RESULT_DIR/results/logs"
+RAW_DIR="$RESULT_DIR/results/eng_200Hz/raw"
+LOG_DIR="$RESULT_DIR/results/eng_200Hz/logs"
 DUMP_ROOT=""
 
 # 100, 50, 20, 10, 5 and 2 Hz.
 # NETWORK_PERIODS=("0.01" "0.02" "0.05" "0.1" "0.2" "0.5")
-NETWORK_PERIODS=("0.02")
+NETWORK_PERIODS=("0.005")
 # to do again np 0.02
 OUTPUT_PERIOD="0.005"
 
