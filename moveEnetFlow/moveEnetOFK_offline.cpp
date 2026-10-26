@@ -220,7 +220,7 @@ int main(int argc, char *argv[]){
         ss << std::left << std::setw(20) << "--dhp19" << std::setw(12) << ""
             << ": use DHP19 sensor size (346x260); pad MoveNet transport to 352x260\n";
         ss << std::left << std::setw(20) << "--moveiit" << std::setw(12) << ""
-            << ": move-iit-hpe ATIS (1280x720), MoveNet input 640x480\n";
+            << ": move-iit-hpe ATIS (1280x720), MoveNet input 1280x720\n";
         ss << std::left << std::setw(20) << "--pu" << std::setw(12) << "<double>" << ": KF process uncertainty\n";
         ss << std::left << std::setw(20) << "--muD" << std::setw(12) << "<double>" << ": KF measurement uncertainty (position)\n";
         ss << std::left << std::setw(20) << "--muV" << std::setw(12) << "<double>" << ": KF measurement uncertainty (velocity)\n";
@@ -273,10 +273,9 @@ int main(int argc, char *argv[]){
         movenet_res = cv::Size(352, 260);
     }
     else if (use_moveiit_size) {
-        // Native ATIS resolution. Only the image sent to MoveNet is resized;
-        // optical flow and the final predicted joints use native coordinates.
+        // Native ATIS resolution is used for MoveNet, optical flow and the final pose.
         res = cv::Size(1280, 720);
-        movenet_res = cv::Size(640, 480);
+        movenet_res = res;
     }
     else {
         res = cv::Size(
@@ -577,6 +576,12 @@ int main(int argc, char *argv[]){
                 corrected_pose,
                 roiSize
             );
+
+            // Cancel the internal 1.4 velocity scaling in hpe-core
+            for (auto &v : jvs) {
+                v.u /= 1.4f;
+                v.v /= 1.4f;
+            }
 
             // 4. Feed estimated joint velocities back into KF
             state.setVelocity(jvs);
