@@ -26,7 +26,10 @@
 #include <cstring>
 #include <fcntl.h>
 #include <filesystem>
+#include <regex>
+#include <fstream>
 #include <iomanip>
+#include <limits>
 #include <iostream>
 #include <mutex>
 #include <condition_variable>
@@ -63,7 +66,7 @@ struct Config {
     std::string script="/usr/local/src/hpe-core/example/movenet/movenet_online.py";
     std::string checkpoint;
     std::string device="cuda:0";
-    bool dhp19=false;
+    bool dhp19=false, moveiit=false;
     int width=640, height=480;
     double netPeriod=0.2, flowPeriod=0.005, frameFps=30;
     double gainA=1.4, gainB=1.0;
@@ -92,8 +95,10 @@ Config parseConfig(int argc,char**argv) {
     Config c;
     c.input=rf.check("data_file",Value("")).asString();
     c.dhp19=rf.check("dhp19");
-    c.width=c.dhp19 ? 346:rf.check("w",Value(640)).asInt32();
-    c.height=c.dhp19 ? 260:rf.check("h",Value(480)).asInt32();
+    c.moveiit=rf.check("moveiit");
+    if(c.dhp19 && c.moveiit) throw std::runtime_error("--dhp19 and --moveiit are mutually exclusive");
+    c.width=c.dhp19 ? 346:(c.moveiit ? 1280:rf.check("w",Value(640)).asInt32());
+    c.height=c.dhp19 ? 260:(c.moveiit ? 720:rf.check("h",Value(480)).asInt32());
     c.netPeriod=rf.check("net_period",Value(.2)).asFloat64();
     c.flowPeriod=rf.check("flow_period",Value(.005)).asFloat64();
     c.frameFps=rf.check("fps",Value(30)).asFloat64();
@@ -388,22 +393,69 @@ int main(int argc,char**argv) {
         speedFactor.store(1.0);
         ev::offlineLoader<ev::AE> replay;
         if(!replay.load(c.input))throw std::runtime_error("Failed to load data.log");
-        double firstTs=0,lastTs=0;
-        bool found=false;
-        if(c.durationHint<0) {
-            // Fast metadata scan: no neural inference or surface reconstruction yet.
-            ev::offlineLoader<ev::AE> probe;
-            if(!probe.load(c.input))throw std::runtime_error("Failed to scan data.log");
-            double nxt=0;
-            while(!stopRequested && probe.incrementReadTill(nxt)){
-                if(probe.begin()==probe.end()){nxt+=1e-6;continue;}
-                double ts=probe.begin().timestamp();
-                if(!found){firstTs=ts;found=true;}
-                lastTs=ts;nxt=ts+1e-6;
+        // The event-driven library already knows the exact timestamp domain
+        // and duration after load(). Never re-load/scan a potentially huge ATIS
+        // recording just to discover its length. Its timestamps can be Unix time.
+        // Use the API available in the installed event-driven version.
+        const double eventStartTs=replay.begin().timestamp();
+
+        // Find the last AE packet timestamp directly in data.log.
+        // Read only the file tail, expanding the window if necessary.
+        double lastEventTs=eventStartTs;
+        {
+            std::ifstream meta(c.input,std::ios::binary|std::ios::ate);
+            if(!meta)
+                throw std::runtime_error("Cannot open event recording: "+c.input);
+
+            const std::streamoff size=meta.tellg();
+            if(size<=0)
+                throw std::runtime_error("Empty data.log");
+
+            const std::regex header(
+                R"((?:^|\n)[0-9]+[ \t]+([-+]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][-+]?[0-9]+)?)[ \t]+AE[ \t]+[0-9]+[ \t]+)"
+            );
+
+            for(std::streamoff window=std::min<std::streamoff>(size,262144);
+                ;
+                window=std::min<std::streamoff>(size,window*2))
+            {
+                meta.clear();
+                meta.seekg(size-window,std::ios::beg);
+
+                std::string tail(static_cast<std::size_t>(window),'\0');
+                meta.read(&tail[0],static_cast<std::streamsize>(tail.size()));
+
+                bool found=false;
+                for(std::sregex_iterator it(tail.begin(),tail.end(),header),end;
+                    it!=end;++it)
+                {
+                    const double t=std::stod((*it)[1].str());
+                    if(std::isfinite(t) && t>=eventStartTs) {
+                        lastEventTs=t;
+                        found=true;
+                    }
+                }
+
+                if(found && (lastEventTs>eventStartTs || window==size))
+                    break;
+
+                if(window==size)
+                    throw std::runtime_error(
+                        "Cannot locate a valid final AE packet timestamp"
+                    );
             }
-            if(!found)throw std::runtime_error("Empty event recording");
         }
-        double duration=c.durationHint>=0?c.durationHint:lastTs-firstTs;
+
+        const double availableDuration=lastEventTs-eventStartTs;
+        if (!std::isfinite(eventStartTs) || !std::isfinite(availableDuration) ||
+            availableDuration <= 0.0) {
+            throw std::runtime_error("Invalid or zero-duration event recording: " + c.input +
+                                     " [" + replay.getinfo() + "]");
+        }
+        const double duration=c.durationHint>=0?c.durationHint:availableDuration;
+        std::cerr << "[OF GUI] " << replay.getinfo()
+                  << "; absolute start=" << std::setprecision(16) << eventStartTs
+                  << "; duration=" << availableDuration << " s" << std::endl;
         std::cout<<"META {\"duration\":"<<std::fixed<<std::setprecision(6)<<duration
                  <<",\"width\":"<<c.width<<",\"height\":"<<c.height<<"}"<<'\n'<<std::flush;
         if(stopRequested)return 0;
@@ -413,7 +465,7 @@ int main(int argc,char**argv) {
         cv::Mat latestEvents(c.height,c.width,CV_64FC1,cv::Scalar(-1e30));
         hpecore::stampedPose detection{};
         bool pending=false,hasDetection=false;
-        double detTs=-1e30,netNext=0,flowNext=0,packetNext=0,firstPacketTs=0;
+        double detTs=-1e30,netNext=0,flowNext=0,packetNext=std::nextafter(eventStartTs,std::numeric_limits<double>::infinity()),firstPacketTs=0;
         bool hasFirstPacket=false;
         std::size_t frameIndex=0,packets=0;
         double lastProgress=-1;
@@ -437,8 +489,11 @@ int main(int argc,char**argv) {
         // Use each event packet exactly once, and render scheduled frames using
         // the most recent (non-future) state. All inference remains dataset-time.
         while(!stopRequested && replay.incrementReadTill(packetNext)) {
-            if(replay.begin()==replay.end()){packetNext+=1e-6;continue;}
-            double ts=replay.begin().timestamp();
+            if(replay.begin()==replay.end()){packetNext=std::nextafter(packetNext,std::numeric_limits<double>::infinity());continue;}
+            const double packetAbsTs=replay.begin().timestamp();
+            const double ts=packetAbsTs-eventStartTs; // Relative dataset seconds for SAE, KF, playback
+            if(!std::isfinite(ts) || ts < -EPS)
+                throw std::runtime_error("Invalid packet timestamp or recording time origin");
             if(!hasFirstPacket){
                 firstPacketTs=ts;netNext=ts;flowNext=ts;
                 a.setFirstTs(ts);b.setFirstTs(ts);hasFirstPacket=true;
@@ -449,7 +504,7 @@ int main(int argc,char**argv) {
                 }
             }
             if(stopRequested)break;
-            packetNext=ts+1e-6;packets++;
+            packetNext=std::nextafter(packetAbsTs,std::numeric_limits<double>::infinity());packets++;
             bool hasEvents=false;
             for(auto e=replay.begin();e!=replay.end();++e){
                 if(e->x>=c.width||e->y>=c.height||e->x<0||e->y<0)continue;
