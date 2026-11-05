@@ -199,7 +199,9 @@ public:
               double response_timeout,
               const std::string &server_log,
               const std::string &configured_server_request_port,
-              const std::string &configured_server_response_port)
+              const std::string &configured_server_response_port,
+              bool moveiit,
+              const std::string &moveiit_geometry)
     {
         response_timeout_s = response_timeout;
         camera_id = camera;
@@ -254,6 +256,10 @@ public:
                     << " --input_preprocessing " << shellQuote(input_preprocessing)
                     << " --background_domain " << shellQuote(background_domain)
                     << " --background_dt_us " << std::setprecision(12) << background_dt_us;
+            // EPP_MOVEIIT_SINGLE_SERVER_v2: ATIS dataset coordinates only; PointNet unchanged.
+            if (moveiit) {
+                command << " --moveiit --moveiit_geometry " << shellQuote(moveiit_geometry);
+            }
 
             if (!hotpixel_path.empty()) {
                 command << " --hotpixel_path " << shellQuote(hotpixel_path);
@@ -564,6 +570,8 @@ int main(int argc, char *argv[])
              << std::setw(30) << "--output_csv <path>" << ": output CSV, default /tmp/EventPointPose_output.csv\n"
              << std::setw(30) << "--no_csv" << ": disable CSV output\n"
              << std::setw(30) << "--latency_csv <path>" << ": one row per EventPointPose service request\n"
+             << std::setw(30) << "--moveiit" << ": ATIS 1280x720 input, original DHP19 checkpoint\n"
+             << std::setw(30) << "--moveiit_geometry <stretch|letterbox>" << ": geometry adaptation (default stretch)\n"
              << std::setw(30) << "--camera <2|3>" << ": camera id; default inferred from data_file\n"
              << std::setw(30) << "--model_path <path>" << ": PointNet MeanLabel checkpoint\n"
              << std::setw(30) << "--EventPointPose_script <path>" << ": Python YARP sidecar (legacy: --eventPointPose_script)\n"
@@ -603,9 +611,11 @@ int main(int argc, char *argv[])
     ).asString();
     const bool no_csv = rf.check("no_csv");
 
+    const bool use_moveiit = rf.check("moveiit");
+    const std::string moveiit_geometry = rf.check("moveiit_geometry", Value("stretch")).asString();
     int camera = rf.check("camera", Value(-1)).asInt32();
     if (camera < 0) {
-        camera = inferCameraFromPath(data_file);
+        camera = use_moveiit ? 0 : inferCameraFromPath(data_file);
     }
 
     const int width = rf.check("w", Value(346)).asInt32();
@@ -622,7 +632,7 @@ int main(int argc, char *argv[])
         "EventPointPose_script",
         rf.check(
             "eventPointPose_script",
-            Value("/workspace/model_mounts/eventpointpose/PointNet/models/eventPointPose_yarp_server.py")
+            Value("/workspace/moveEnetFlow/utils/eventPointPose_yarp_server.py")
         )
     ).asString();
     const std::string device = rf.check("device", Value("cuda:0")).asString();
@@ -664,7 +674,20 @@ int main(int argc, char *argv[])
         yError() << "--net_period and --output_period must be finite and positive.";
         return -1;
     }
-    if (camera != 2 && camera != 3) {
+    if (use_moveiit) {
+        if (camera != 0) {
+            yError() << "ATIS mode requires --camera 0 (or omit --camera).";
+            return -1;
+        }
+        if (moveiit_geometry != "stretch" && moveiit_geometry != "letterbox") {
+            yError() << "Use --moveiit_geometry stretch or letterbox.";
+            return -1;
+        }
+        if (input_preprocessing != "already_filtered") {
+            yError() << "ATIS mode requires already_filtered (no DHP19 sensor-specific filters).";
+            return -1;
+        }
+    } else if (camera != 2 && camera != 3) {
         yError() << "Could not infer a supported camera. Use --camera 2 or --camera 3.";
         return -1;
     }
@@ -710,6 +733,11 @@ int main(int argc, char *argv[])
     }
     yInfo() << event_loader.getinfo();
     yInfo() << "Camera:" << camera;
+    if (use_moveiit) {
+        yInfo() << "move-iit-hpe: native ATIS 1280x720 -> PointNet DHP19 346x260";
+        yInfo() << "Geometry:" << moveiit_geometry;
+        yInfo() << "ATIS output timestamps relative to first YARP packet.";
+    }
     yInfo() << "PointNet period:" << net_period << "s (" << 1.0 / net_period << "Hz)";
     yInfo() << "CSV period:" << output_period << "s (" << 1.0 / output_period << "Hz)";
     yInfo() << "Input preprocessing:" << input_preprocessing;
@@ -784,7 +812,9 @@ int main(int argc, char *argv[])
             response_timeout,
             server_log,
             server_event_port,
-            server_skeleton_port)) {
+            server_skeleton_port,
+            use_moveiit,
+            moveiit_geometry)) {
         if (csv.is_open()) {
             csv.close();
         }
@@ -1065,10 +1095,16 @@ int main(int argc, char *argv[])
         current_events.reserve(4096);
         double current_timestamp = std::numeric_limits<double>::quiet_NaN();
 
+        double first_dataset_timestamp = std::numeric_limits<double>::quiet_NaN();
         for (ev::offlineLoader<ev::AE>::iterator event = event_loader.begin();
              event != event_loader.end() && gStopRequested == 0;
              event++) {
-            const double packet_timestamp = event.timestamp();
+            const double raw_timestamp = event.timestamp();
+            if (use_moveiit && !std::isfinite(first_dataset_timestamp)) {
+                first_dataset_timestamp = raw_timestamp;
+            }
+            const double packet_timestamp = use_moveiit
+                ? raw_timestamp - first_dataset_timestamp : raw_timestamp;
 
             if (!std::isfinite(current_timestamp)) {
                 current_timestamp = packet_timestamp;
