@@ -9,7 +9,7 @@
   <label for="samplePath">Server-side data.log (absolute path)</label>
   <div class="pathrow"><input id="samplePath" type="text" spellcheck="false" placeholder="/data/.../ch3dvs/data.log" title="Full path to a data.log file in the Docker container"><button id="browse" class="browse-btn" type="button" title="Open the full-screen file browser">Browse…</button></div>
   <div class="path-hint">Select a file in the browser, or paste any absolute path to <code>data.log</code>.</div><div id="selectedFilePath" class="selected-file-path" hidden></div>
-  <div class="twocol"><div><label>Dataset / sensor</label><select id="dataset"><option value="auto">Auto detect</option><option value="dhp19">DHP19 · 346×260</option><option value="eh36m">eH36M / custom</option></select></div><div><label>GPU / CPU</label><input id="device" type="text" value="cuda:0"></div></div>
+  <div class="twocol"><div><label>Dataset / sensor</label><select id="dataset"><option value="auto">Auto detect</option><option value="dhp19">DHP19 · 346×260</option><option value="moveiit">move-iit-hpe · 1280×720</option><option value="eh36m">eH36M / custom</option></select></div><div><label>GPU / CPU</label><input id="device" type="text" value="cuda:0"></div></div>
   <div class="twocol"><div><label>Sensor width</label><input id="sensorW" type="number" min="32" max="2048" value="640"></div><div><label>Sensor height</label><input id="sensorH" type="number" min="32" max="2048" value="480"></div></div>
   <button id="openSample" class="primary block">Load sample & play</button>
  </section>

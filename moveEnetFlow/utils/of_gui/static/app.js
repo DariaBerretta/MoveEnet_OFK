@@ -25,9 +25,11 @@ async function safeRequest(path, method, body) {
 function formSettings() {
   const path=$('samplePath').value.trim();
   const d=$('dataset').value;
-  const isDhp = d==='dhp19'||(d==='auto'&&path.toLowerCase().includes('dhp19'));
+  const pathLower=path.toLowerCase();
+  const isDhp=d==='dhp19'||(d==='auto'&&pathLower.includes('dhp19'));
+  const isMoveiit=!isDhp&&(d==='moveiit'||(d==='auto'&&/move[-_]?iit|atis-s/.test(pathLower)));
   return {
-    data_file:path, dhp19:isDhp, w:+$('sensorW').value, h:+$('sensorH').value,
+    data_file:path, dhp19:isDhp, moveiit:isMoveiit, w:+$('sensorW').value, h:+$('sensorH').value,
     net_period:+$('netPeriod').value, flow_period:+$('flowPeriod').value,
     fps:+$('fps').value, gain_a:+$('gainA').value,gain_b:+$('gainB').value,
     compare:$('compare').checked,roi:+$('roiSize').value,
@@ -40,7 +42,7 @@ function formSettings() {
   };
 }
 function fillForm(s) {
-  const vals={samplePath:s.data_file, dataset:s.dhp19?'dhp19':'eh36m',sensorW:s.w,sensorH:s.h,
+  const vals={samplePath:s.data_file, dataset:s.dhp19?'dhp19':s.moveiit?'moveiit':'eh36m',sensorW:s.w,sensorH:s.h,
     netPeriod:s.net_period,flowPeriod:s.flow_period,fps:s.fps,
     gainA:s.gain_a,gainANum:s.gain_a,gainB:s.gain_b,gainBNum:s.gain_b,
     roiSize:s.roi,pu:s.pu,muD:s.muD,muV:s.muV,device:s.device,
@@ -221,8 +223,13 @@ function updateDatasetDefaults() {
   updateSelectedFilePath();
   const d=$('dataset').value, path=$('samplePath').value.toLowerCase();
   const dhp=d==='dhp19'||(d==='auto'&&path.includes('dhp19'));
-  $('sensorW').value=dhp?346:640;$('sensorH').value=dhp?260:480;
+  const moveiit=!dhp&&(d==='moveiit'||(d==='auto'&&/move[-_]?iit|atis-s/.test(path)));
+  $('sensorW').value=dhp?346:moveiit?1280:640;$('sensorH').value=dhp?260:moveiit?720:480;
   $('pu').value=dhp?0.36:0.77;$('muD').value=dhp?0.01:0.06;$('muV').value=dhp?0.01:0.97;
+  $('roiSize').value=moveiit?35:20;
+  const defaultGain=moveiit?1.0:1.4;
+  $('gainA').value=defaultGain;$('gainANum').value=defaultGain;
+  $('gainATag').textContent=defaultGain.toFixed(2);
 }
 $('dataset').addEventListener('change',updateDatasetDefaults);
 $('openSample').onclick=async()=>{
