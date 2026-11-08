@@ -23,7 +23,7 @@ JOINTS = ['Head', 'Right shoulder', 'Left shoulder', 'Right elbow', 'Left elbow'
           'Left hip', 'Right hip', 'Right wrist', 'Left wrist', 'Right knee',
           'Left knee', 'Right ankle', 'Left ankle']
 DEFAULT = {
-    'data_file': '', 'dhp19': False, 'w': 640, 'h': 480,
+    'data_file': '', 'dhp19': False, 'moveiit': False, 'w': 640, 'h': 480,
     'net_period': 0.2, 'flow_period': 0.005, 'fps': 30,
     'gain_a': 1.4, 'gain_b': 1.0, 'compare': True,
     'roi': 20, 'of_joints': list(range(13)),
@@ -71,11 +71,15 @@ def validated(config):
     if type(c['of_joints']) is not list or any(type(x) is not int or x < 0 or x >= 13 for x in c['of_joints']):
         raise ValueError('of_joints must be a list of indices 0..12')
     c['of_joints'] = sorted(set(c['of_joints']))
-    for key in ('dhp19', 'compare', 'reset_on_detection', 'use_lc'):
+    for key in ('dhp19', 'moveiit', 'compare', 'reset_on_detection', 'use_lc'):
         if not isinstance(c[key], bool):
             raise ValueError('{} must be boolean'.format(key))
+    if c['dhp19'] and c['moveiit']:
+        raise ValueError('DHP19 and move-iit-hpe modes are mutually exclusive')
     if c['dhp19']:
         c['w'], c['h'] = 346, 260
+    elif c['moveiit']:
+        c['w'], c['h'] = 1280, 720
     for key in ('device', 'checkpoint_path', 'movenet_script', 'python'):
         c[key] = str(c[key])
     return c
@@ -150,6 +154,8 @@ class ReplayManager:
         args = [self.executable, '--data_file', config['data_file']]
         if config['dhp19']:
             args.append('--dhp19')
+        elif config['moveiit']:
+            args.append('--moveiit')
         else:
             args += ['--w', str(config['w']), '--h', str(config['h'])]
         mapping = {'net_period': 'net_period', 'flow_period': 'flow_period',
