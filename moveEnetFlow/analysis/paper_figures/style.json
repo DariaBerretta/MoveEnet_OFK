@@ -1,0 +1,146 @@
+{
+  "version": 1,
+  "fonts": {
+    "family": "STIXGeneral",
+    "mathtext": "stix",
+    "label": 9,
+    "tick": 8,
+    "legend": 8.5,
+    "title": 9.5,
+    "annotation": 8
+  },
+  "figure": {
+    "width_mm": 178,
+    "row_height_mm": 50,
+    "legend_height_mm": 16,
+    "rtf_height_mm": 76,
+    "layout_pad": 0.65,
+    "horizontal_pad": 1.8,
+    "vertical_pad": 1.5,
+    "single_width_mm": 105
+  },
+  "lines": {
+    "width": 1.25,
+    "marker_size": 5,
+    "marker_edge_width": 0.4,
+    "marker_edge_color": "white",
+    "error_width": 0.8,
+    "capsize": 2.5,
+    "flow_styles": [
+      "-",
+      "--",
+      ":",
+      "-."
+    ]
+  },
+  "axes": {
+    "linewidth": 0.6,
+    "grid": true,
+    "grid_color": "#D8D8D8",
+    "grid_alpha": 0.7,
+    "grid_linewidth": 0.45,
+    "grid_axis": "both",
+    "spines": [
+      "left",
+      "bottom"
+    ],
+    "tick_length": 2.5
+  },
+  "legend": {
+    "location": "lower center",
+    "columns": 3,
+    "bottom_mm": 2,
+    "frame": false,
+    "column_spacing": 1.4,
+    "handle_length": 1.8,
+    "label_spacing": 0.45
+  },
+  "plots": {
+    "energy_accuracy": {
+      "xscale": "log",
+      "yscale": "linear"
+    },
+    "accuracy_rate": {
+      "xscale": "log",
+      "yscale": "linear"
+    },
+    "energy_rtf": {
+      "xscale": "log",
+      "yscale": "log"
+    }
+  },
+  "rtf_reference": {
+    "show": true,
+    "value": 1,
+    "color": "#777777",
+    "linestyle": "--",
+    "linewidth": 0.8
+  },
+  "method_order": [
+    "movenet",
+    "moveenetofk",
+    "yolo",
+    "openpose",
+    "eventpointpose"
+  ],
+  "methods": {
+    "movenet": {
+      "label": "MoveEnet-only",
+      "color": "#0072B2",
+      "marker": "o"
+    },
+    "moveenetofk": {
+      "label": "MoveEnetOFK",
+      "color": "#009E73",
+      "marker": "s"
+    },
+    "yolo": {
+      "label": "YOLOPose",
+      "color": "#E69F00",
+      "marker": "D"
+    },
+    "openpose": {
+      "label": "OpenPose",
+      "color": "#CC79A7",
+      "marker": "^"
+    },
+    "eventpointpose": {
+      "label": "EventPointPose",
+      "color": "#D55E00",
+      "marker": "v"
+    }
+  },
+  "dataset_order": [
+    "eh36m",
+    "dhp19",
+    "moveiit"
+  ],
+  "datasets": {
+    "eh36m": {
+      "label": "eH36M"
+    },
+    "dhp19": {
+      "label": "DHP19"
+    },
+    "moveiit": {
+      "label": "Move-IIT-HPE"
+    }
+  },
+  "metrics": {
+    "network_hz": "Network rate (Hz)",
+    "mpjpe_px": "MPJPE (px)",
+    "pck_percent": "PCK@0.2 (%)",
+    "energy_j_per_sequence": "Energy (J / sequence)",
+    "energy_j_per_input_s": "Energy (J / input s)",
+    "rtf": "Real-time factor (RTF)"
+  },
+  "export": {
+    "formats": [
+      "pdf",
+      "svg",
+      "png"
+    ],
+    "dpi": 300,
+    "transparent": false
+  }
+}

@@ -1,0 +1,6 @@
+Unnamed: 0,model,method,energy_mean_j,mpjpe_px,pck02_percent,n_sequences
+0,movenet_50hz,MoveEnet-only (50 Hz),498.767,58.621,38.258,12
+1,movenet_5hz,MoveEnet-only (5 Hz),237.06,60.502,35.99,12
+2,moveenetofk_5hz,"MoveEnetOFK (5 Hz, flow 200 Hz)",257.738,57.492,37.648,12
+3,eventpointpose_5hz,EventPointPose (5 Hz),2379.647,87.212,19.112,12
+4,eventpointpose_50hz,EventPointPose (50 Hz),2982.064,86.239,19.826,12

@@ -10,7 +10,7 @@ BINARY="${BINARY:-/workspace/moveEnetFlow/build/moveEnetOFK_offline}"
 CHECKPOINT="${CHECKPOINT:-/usr/local/src/hpe-core/example/movenet/models/e97_valacc0.81209.pth}"
 RESULTS="${RESULTS:-/data/MoveEnet_OFK_results/Final_ROI_Gain1/Accuracy/moveiit/ExpA}"
 DEVICE="${DEVICE:-cuda:0}"
-NETWORK_PERIODS=(0.01 0.02 0.05 0.1 0.2 0.5)
+NETWORK_PERIODS=(0.005)
 FLOW_PERIOD=0.005
 OUTPUT_PERIOD=0.005
 ROI=35
@@ -113,9 +113,9 @@ for np in "${NETWORK_PERIODS[@]}"; do
     for ((i=0; i<${#EVENTS[@]}; i++)); do
         stem="${SUBJECTS[$i]}__${SEQUENCES[$i]}__atis-s"
         echo "[$((i+1))/${#EVENTS[@]}] network=$np s | ${SUBJECTS[$i]}/${SEQUENCES[$i]}"
-        run_one ofk "$stem OFK" "${EVENTS[$i]}" "$np" \
-            "$run_dir/${stem}_moveenet_ofk_np_${safe_np}_fp_0p005.csv" \
-            "$RESULTS/logs/${stem}_moveenet_ofk_np_${safe_np}_fp_0p005.log"
+        # run_one ofk "$stem OFK" "${EVENTS[$i]}" "$np" \                                               # UNCOMMENT THIS SECTION TO RUN MoveEnetOFK
+        #     "$run_dir/${stem}_moveenet_ofk_np_${safe_np}_fp_0p005.csv" \
+        #     "$RESULTS/logs/${stem}_moveenet_ofk_np_${safe_np}_fp_0p005.log"
         run_one net "$stem MoveEnet-only" "${EVENTS[$i]}" "$np" \
             "$run_dir/${stem}_moveenet_only_np_${safe_np}_fp_0p005.csv" \
             "$RESULTS/logs/${stem}_moveenet_only_np_${safe_np}_fp_0p005.log"

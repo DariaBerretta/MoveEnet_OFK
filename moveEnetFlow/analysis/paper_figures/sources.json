@@ -1,0 +1,18 @@
+{
+  "energy_accuracy": {
+    "all": "data/energy_accuracy_preview.csv"
+  },
+  "accuracy_rate": {
+    "eh36m": null,
+    "dhp19": null,
+    "moveiit": "data/cached_moveiit_ablation_59.csv"
+  },
+  "energy_rtf": {
+    "eh36m": null,
+    "dhp19": null,
+    "moveiit": "data/cached_moveiit_rtf_12.csv"
+  },
+  "expa_ofk_flow_hz": 200,
+  "baseline_source_flow_hz": 200,
+  "expa_pck_1_5_recomputed": false
+}

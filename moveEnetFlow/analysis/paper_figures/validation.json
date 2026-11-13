@@ -1,0 +1,21 @@
+{
+  "scope": "Software integration and layout checks on cached notebook values; no re-evaluation of raw predictions or validation of scientific protocols.",
+  "runtime": {
+    "python": "3.12.14",
+    "matplotlib": "3.10.8",
+    "numpy": "2.3.5",
+    "pandas": "2.2.3"
+  },
+  "checks": [
+    "All packaged Python files parse with Python 3.8 syntax rules.",
+    "Energy adapters preserve point-weighted source values and distinguish 3 Move-IIT algorithms / 5 operating points; missing intervals remain missing.",
+    "Accuracy-rate renderer runs on actual cached DHP19 and native-time Move-IIT summaries, including multiple flow styles and explicit ticks.",
+    "Energy\u2013RTF renderer runs on cached Move-IIT numerical values with the actual available confidence bounds.",
+    "All three datasets use the fixed color/marker registry; rendering isolates a pre-existing dark notebook style and retains 178 mm width.",
+    "Duplicate points, mixed declared protocols, PCK above 100%, and one-sided intervals are rejected.",
+    "Intervals that do not bracket the estimate render without clipping or moving the original estimate.",
+    "All notebook code cells execute in order in a fresh namespace using the shipped preview configuration.",
+    "SVG contains editable text and all five legend labels; exported provenance is strict JSON without NaN literals.",
+    "PDF inspected at 178 x 173 mm; STIXGeneral font is embedded. Final annotations and logarithmic interval extents inspected visually."
+  ]
+}

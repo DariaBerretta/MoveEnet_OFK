@@ -1,0 +1,13 @@
+dataset,method,network_hz,flow_hz,output_hz,protocol_id,cohort_id,operating_point,n_sequences,mpjpe_px,pck_percent
+moveiit,moveenetofk,2,200.0,,MoveIIT_ExpA_2DGT_masked_v2_torso_1_5_GT_timeoffset_zero_provisional,moveiit_59recordings,2Hz,59,62.8,33.515
+moveiit,movenet,2,,,MoveIIT_ExpA_2DGT_masked_v2_torso_1_5_GT_timeoffset_zero_provisional,moveiit_59recordings,2Hz,59,67.746,29.879
+moveiit,moveenetofk,5,200.0,,MoveIIT_ExpA_2DGT_masked_v2_torso_1_5_GT_timeoffset_zero_provisional,moveiit_59recordings,5Hz,59,59.714,35.826
+moveiit,movenet,5,,,MoveIIT_ExpA_2DGT_masked_v2_torso_1_5_GT_timeoffset_zero_provisional,moveiit_59recordings,5Hz,59,62.673,34.312
+moveiit,moveenetofk,10,200.0,,MoveIIT_ExpA_2DGT_masked_v2_torso_1_5_GT_timeoffset_zero_provisional,moveiit_59recordings,10Hz,59,59.218,36.609
+moveiit,movenet,10,,,MoveIIT_ExpA_2DGT_masked_v2_torso_1_5_GT_timeoffset_zero_provisional,moveiit_59recordings,10Hz,59,61.836,35.93
+moveiit,moveenetofk,20,200.0,,MoveIIT_ExpA_2DGT_masked_v2_torso_1_5_GT_timeoffset_zero_provisional,moveiit_59recordings,20Hz,59,58.416,37.157
+moveiit,movenet,20,,,MoveIIT_ExpA_2DGT_masked_v2_torso_1_5_GT_timeoffset_zero_provisional,moveiit_59recordings,20Hz,59,61.205,36.62
+moveiit,moveenetofk,50,200.0,,MoveIIT_ExpA_2DGT_masked_v2_torso_1_5_GT_timeoffset_zero_provisional,moveiit_59recordings,50Hz,59,58.057,37.345
+moveiit,movenet,50,,,MoveIIT_ExpA_2DGT_masked_v2_torso_1_5_GT_timeoffset_zero_provisional,moveiit_59recordings,50Hz,59,61.075,36.705
+moveiit,moveenetofk,100,200.0,,MoveIIT_ExpA_2DGT_masked_v2_torso_1_5_GT_timeoffset_zero_provisional,moveiit_59recordings,100Hz,59,58.084,37.428
+moveiit,movenet,100,,,MoveIIT_ExpA_2DGT_masked_v2_torso_1_5_GT_timeoffset_zero_provisional,moveiit_59recordings,100Hz,59,61.104,36.751

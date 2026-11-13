@@ -1,0 +1,79 @@
+{
+  "purpose": "Review the proposed shared style with genuine cached notebook values. This is not a recomputation or validation of the final paper results.",
+  "repository": "https://github.com/DariaBerretta/MoveEnet_OFK",
+  "repository_commit": "0e499b8f4c1d7cd9b909b5884b89890aa4a58f25",
+  "created_on": "2026-11-08",
+  "data_origin": "HTML tables stored in executed notebooks, retrieved through GitHub",
+  "transforms": [
+    "Renamed dataset/method/metric columns explicitly.",
+    "Kept the point-weighted accuracy columns for ExpFinal.",
+    "Parsed explicitly named Move-IIT rate variants into separate algorithm and rate fields.",
+    "Assigned 200 Hz flow to OFK from the documented protocol; no flow assigned to baselines.",
+    "Kept cached numerical values at their original displayed precision.",
+    "Did not estimate unavailable error bars or combine cohorts."
+  ],
+  "sources": [
+    {
+      "id": "final_valid_subset_cached",
+      "path": "moveEnetFlow/experiments/ExpFinal/notebooks/Energy_Power_Accuracy_Final_D09_D10_excluded.ipynb",
+      "cell_index_zero_based": 7,
+      "csv_name": "cached_final_valid_subset_energy_accuracy.csv",
+      "description": "Cached HTML output; 12 eH36M and 10 DHP19 recordings per method, D09/D10 excluded. Joint-point-weighted accuracy columns retained. Display precision: six decimal places.",
+      "metric_protocol": "ExpA_GT_to_prediction_linear_endpoint_hold_torso_1_5_finite_rows_v1",
+      "recomputed_from_raw": false,
+      "intervals_available_in_displayed_table": false,
+      "source_url": "https://github.com/DariaBerretta/MoveEnet_OFK/blob/0e499b8f4c1d7cd9b909b5884b89890aa4a58f25/moveEnetFlow/experiments/ExpFinal/notebooks/Energy_Power_Accuracy_Final_D09_D10_excluded.ipynb",
+      "repository_commit": "0e499b8f4c1d7cd9b909b5884b89890aa4a58f25",
+      "csv_sha256": "5236f0d08e45595e92c7e1c7e1538eb03a7916c8274710f87e4a82556e00e02a"
+    },
+    {
+      "id": "moveiit_12recordings_cached",
+      "path": "moveEnetFlow/experiments/ExpEnergy/Notebooks/MoveIIT_EventPointPose_Energy_RTF_Analysis.ipynb",
+      "cell_index_zero_based": 22,
+      "csv_name": "cached_moveiit_energy_accuracy_12recordings.csv",
+      "description": "Cached HTML output from the optional join restricted to the 12 energy recordings. Three algorithms and five operating points. Display precision: three decimal places. The notebook describes GT correspondence/timing as provisional and energy measurements as coming from separate sessions.",
+      "metric_protocol": "moveiit_cached_12recording_energy_accuracy_join_provisional",
+      "recomputed_from_raw": false,
+      "intervals_available_in_displayed_table": false,
+      "source_url": "https://github.com/DariaBerretta/MoveEnet_OFK/blob/0e499b8f4c1d7cd9b909b5884b89890aa4a58f25/moveEnetFlow/experiments/ExpEnergy/Notebooks/MoveIIT_EventPointPose_Energy_RTF_Analysis.ipynb",
+      "repository_commit": "0e499b8f4c1d7cd9b909b5884b89890aa4a58f25",
+      "csv_sha256": "97bbc598322f692727e6801d60e487b52dfce5fb0972d3780c4db115510fb46d"
+    }
+  ],
+  "paper_pck_definition": {
+    "anatomical_pair": [
+      "right_shoulder",
+      "left_hip"
+    ],
+    "hpecore_joint_indices": [
+      1,
+      5
+    ],
+    "origin": "User-confirmed 2026-11-08",
+    "effect_on_preview": "No numerical values altered. All plotting functions read input PCK; historical ExpA eH36M/DHP19 with 2/6 needs recomputation."
+  },
+  "additional_sources": [
+    {
+      "id": "moveiit_59_ablation",
+      "path": "moveEnetFlow/experiments/ExpA/expA_accuracy_vs_network_period/notebooks/MoveIIT_ExpA_2DGT_Analysis.ipynb",
+      "cell_index_zero_based": 12,
+      "numeric_precision": "3 decimals in cached notebook output",
+      "dataset": "moveiit",
+      "pck_reference_joints": [
+        1,
+        5
+      ],
+      "cohort": "59 recordings",
+      "caveat": "GT time offset 0.0 s explicitly provisional in notebook"
+    },
+    {
+      "id": "moveiit_12_rtf",
+      "path": "moveEnetFlow/experiments/ExpEnergy/Notebooks/MoveIIT_EventPointPose_Energy_RTF_Analysis.ipynb",
+      "cell_index_zero_based": 4,
+      "numeric_precision": "3 decimals in cached notebook output",
+      "dataset": "moveiit",
+      "cohort": "12 recordings",
+      "caveat": "EPP and MoveEnet energy recorded in separate sessions"
+    }
+  ]
+}

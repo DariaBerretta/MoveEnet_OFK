@@ -1,0 +1,6 @@
+dataset,method,network_hz,flow_hz,output_hz,protocol_id,cohort_id,operating_point,n_sequences,energy_j_per_sequence,rtf,energy_j_per_input_s
+moveiit,movenet,50,,,MoveIIT_Energy_RTF_12recording_cached_distinct_sessions,moveiit_energy_12recordings,50Hz,12,498.767,0.736,30.244
+moveiit,movenet,5,,,MoveIIT_Energy_RTF_12recording_cached_distinct_sessions,moveiit_energy_12recordings,5Hz,12,237.06,0.404,14.375
+moveiit,moveenetofk,5,200.0,,MoveIIT_Energy_RTF_12recording_cached_distinct_sessions,moveiit_energy_12recordings,5Hz,12,257.738,0.441,15.629
+moveiit,eventpointpose,5,,,MoveIIT_Energy_RTF_12recording_cached_distinct_sessions,moveiit_energy_12recordings,5Hz,12,2379.647,4.327,144.297
+moveiit,eventpointpose,50,,,MoveIIT_Energy_RTF_12recording_cached_distinct_sessions,moveiit_energy_12recordings,50Hz,12,2982.064,4.801,180.826
