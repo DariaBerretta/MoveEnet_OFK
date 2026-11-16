@@ -69,7 +69,7 @@ struct Config {
     bool dhp19=false, moveiit=false;
     int width=640, height=480;
     double netPeriod=0.2, flowPeriod=0.005, frameFps=30;
-    double gainA=1.4, gainB=1.0;
+    double gainA=1.0, gainB=1.0;
     double pu=0.77, muD=0.06, muV=0.97;
     int roi=20;
     bool useLc=true, compare=true, resetOnDetection=true;
@@ -102,7 +102,7 @@ Config parseConfig(int argc,char**argv) {
     c.netPeriod=rf.check("net_period",Value(.2)).asFloat64();
     c.flowPeriod=rf.check("flow_period",Value(.005)).asFloat64();
     c.frameFps=rf.check("fps",Value(30)).asFloat64();
-    c.gainA=rf.check("gain_a",Value(1.4)).asFloat64();
+    c.gainA=rf.check("gain_a",Value(1.0)).asFloat64();
     c.gainB=rf.check("gain_b",Value(1.0)).asFloat64();
     c.roi=rf.check("roi",Value(20)).asInt32();
     c.pu=rf.check("pu",Value(c.dhp19?.36:.77)).asFloat64();
@@ -198,8 +198,13 @@ public:
     MoveEnetClient(const Config&c):width(c.width),height(c.height),transportWidth(c.dhp19?352:c.width){
         try {
             if(!Network::checkNetwork(2.0)) throw std::runtime_error("YARP server unavailable; run yarpserver &");
+            // During sample changes, the previous YARP ports can take a moment to disappear.
+            // Never unregister another process's ports or kill unrelated servers.
+            for(int attempt=0; attempt<50 && !stopRequested &&
+                (NetworkBase::exists("/movenet/img:i") || NetworkBase::exists("/movenet/sklt:o")); ++attempt)
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
             if(NetworkBase::exists("/movenet/img:i") || NetworkBase::exists("/movenet/sklt:o"))
-                throw std::runtime_error("Existing MoveEnet detected on /movenet/*: close it before opening GUI (no other process was modified)");
+                throw std::runtime_error("MoveEnet YARP ports still occupied on /movenet/*; close the other active server before opening GUI");
             const std::string suf=std::to_string(::getpid());
             if(!output.open("/of_gui/eros:o_"+suf) || !input.open("/of_gui/sklt:i_"+suf))
                 throw std::runtime_error("Cannot open private YARP ports");
@@ -264,7 +269,7 @@ struct Lane {
     hpecore::pwtripletvelocity of;
     hpecore::skeleton13 fused{}, integrated{}, roiCenters{}, velocities{};
     bool integratedReady=false;
-    double lastFlowTs=0, gain=1.4;
+    double lastFlowTs=0, gain=1.0;
     bool ready=false;
     Lane(const Config&c,double g):gain(g) {
         if(!kf.initialise({c.pu,c.muD,c.muV,c.useLc?1.0:0.0}))
@@ -412,7 +417,7 @@ int main(int argc,char**argv) {
                 throw std::runtime_error("Empty data.log");
 
             const std::regex header(
-                R"((?:^|\n)[0-9]+[ \t]+([-+]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][-+]?[0-9]+)?)[ \t]+AE[ \t]+[0-9]+[ \t]+)"
+                R"((?:^|\n)[0-9]+[ \t]+([-+]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][-+]?[0-9]+)?)[ \t]+AE[ \t]+(?:[0-9]+[ \t]+|\())"
             );
 
             for(std::streamoff window=std::min<std::streamoff>(size,262144);

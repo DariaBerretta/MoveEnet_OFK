@@ -25,7 +25,7 @@ JOINTS = ['Head', 'Right shoulder', 'Left shoulder', 'Right elbow', 'Left elbow'
 DEFAULT = {
     'data_file': '', 'dhp19': False, 'moveiit': False, 'w': 640, 'h': 480,
     'net_period': 0.2, 'flow_period': 0.005, 'fps': 30,
-    'gain_a': 1.4, 'gain_b': 1.0, 'compare': True,
+    'gain_a': 1.0, 'gain_b': 1.0, 'compare': True,
     'roi': 20, 'of_joints': list(range(13)),
     'reset_on_detection': True, 'pu': 0.77, 'muD': 0.06,
     'muV': 0.97, 'use_lc': True, 'event_window_ms': 30,

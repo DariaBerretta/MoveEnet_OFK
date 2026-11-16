@@ -112,6 +112,9 @@ function chooseFile(path) {
   browserSelected=path;
   $('samplePath').value=path;
   selectedFile=path;
+  // New sample: do not keep a manual sensor mode from the previous recording.
+  // The user may select a manual override after the new file has been chosen.
+  $('dataset').value='auto';
   updateDatasetDefaults();
   closeBrowser();
   notify('Selected: '+path);
@@ -211,7 +214,7 @@ $('toggleSidebar').onclick=()=>{
   const hidden=$('appShell').classList.toggle('sidebar-collapsed');
   $('toggleSidebar').textContent=hidden?'Show settings':'Hide settings';
 };
-$('samplePath').addEventListener('change',updateDatasetDefaults);
+$('samplePath').addEventListener('change',()=>{ $('dataset').value='auto'; updateDatasetDefaults(); });
 $('samplePath').addEventListener('input',updateSelectedFilePath);
 function updateSelectedFilePath(){
   const path=$('samplePath').value.trim();
@@ -227,7 +230,7 @@ function updateDatasetDefaults() {
   $('sensorW').value=dhp?346:moveiit?1280:640;$('sensorH').value=dhp?260:moveiit?720:480;
   $('pu').value=dhp?0.36:0.77;$('muD').value=dhp?0.01:0.06;$('muV').value=dhp?0.01:0.97;
   $('roiSize').value=moveiit?35:20;
-  const defaultGain=moveiit?1.0:1.4;
+  const defaultGain=1.0;
   $('gainA').value=defaultGain;$('gainANum').value=defaultGain;
   $('gainATag').textContent=defaultGain.toFixed(2);
 }
