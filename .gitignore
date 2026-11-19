@@ -57,5 +57,7 @@ docker/.env
 /model_mounts/eventpointpose/PointNet/models/old_server/
 
 /moveEnetFlow/old_script_version/**
+/moveEnetFlow/analysis/paper_figures/exports
+/moveEnetFlow/analysis/paper_figures/derived_data
 
 /tmp
