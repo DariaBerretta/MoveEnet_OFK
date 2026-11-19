@@ -470,7 +470,8 @@ int main(int argc,char**argv) {
         cv::Mat latestEvents(c.height,c.width,CV_64FC1,cv::Scalar(-1e30));
         hpecore::stampedPose detection{};
         bool pending=false,hasDetection=false;
-        double detTs=-1e30,netNext=0,flowNext=0,packetNext=std::nextafter(eventStartTs,std::numeric_limits<double>::infinity()),firstPacketTs=0;
+        constexpr double packet_eps = 1e-6;  // Match moveEnetOFK_offline.cpp packet stepping.
+        double detTs=-1e30,netNext=0,flowNext=0,packetNext=eventStartTs+packet_eps,firstPacketTs=0;
         bool hasFirstPacket=false;
         std::size_t frameIndex=0,packets=0;
         double lastProgress=-1;
@@ -494,7 +495,7 @@ int main(int argc,char**argv) {
         // Use each event packet exactly once, and render scheduled frames using
         // the most recent (non-future) state. All inference remains dataset-time.
         while(!stopRequested && replay.incrementReadTill(packetNext)) {
-            if(replay.begin()==replay.end()){packetNext=std::nextafter(packetNext,std::numeric_limits<double>::infinity());continue;}
+            if(replay.begin()==replay.end()){packetNext+=packet_eps;continue;}
             const double packetAbsTs=replay.begin().timestamp();
             const double ts=packetAbsTs-eventStartTs; // Relative dataset seconds for SAE, KF, playback
             if(!std::isfinite(ts) || ts < -EPS)
@@ -509,7 +510,7 @@ int main(int argc,char**argv) {
                 }
             }
             if(stopRequested)break;
-            packetNext=std::nextafter(packetAbsTs,std::numeric_limits<double>::infinity());packets++;
+            packetNext=packetAbsTs+packet_eps;packets++;
             bool hasEvents=false;
             for(auto e=replay.begin();e!=replay.end();++e){
                 if(e->x>=c.width||e->y>=c.height||e->x<0||e->y<0)continue;
