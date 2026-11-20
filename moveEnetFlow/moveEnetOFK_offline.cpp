@@ -289,8 +289,16 @@ int main(int argc, char *argv[]){
     double procU = rf.check("pu", Value(0.77)).asFloat64();                                         // Process uncertainty
     double measUD = rf.check("muD", Value(0.06)).asFloat64();                                       // Measurement uncertainty (position)
     double measUV = rf.check("muV", Value(0.97)).asFloat64();                                       // Measurement uncertainty (velocity)
-    int roiSize = rf.check("roi", Value(20)).asInt32();                                             // ROI size for velocity estimation
+    // ROI size for optical-flow velocity estimation
+    int roiSize = rf.check("roi", Value(20)).asInt32();
 
+    // Effective optical-flow gain
+    const double ofGain = rf.check("of_gain", Value(1.0)).asFloat64();
+
+    if (!std::isfinite(ofGain) || ofGain < 0.0) {
+        yError() << "--of_gain must be finite and non-negative";
+        return -1;
+    }
     bool latency_compensation = rf.check("use_lc", Value(true)).asBool();                          // Latency compensation flag
     bool is_visualize = rf.check("vis");                                                            // Visualization flag
     std::string output_csv_f = rf.check("output_csv_f", Value("/tmp/output.csv")).asString();
@@ -577,10 +585,14 @@ int main(int argc, char *argv[]){
                 roiSize
             );
 
-            // Cancel the internal 1.4 velocity scaling in hpe-core
+            // The skeleton13 hpe-core overload applies an internal 1.4 multiplier.
+            // Remove it and apply a configurable effective optical-flow gain.
+            // With of_gain=1.0, this retains the previous numerical behaviour.
             for (auto &v : jvs) {
                 v.u /= 1.4f;
                 v.v /= 1.4f;
+                v.u *= static_cast<float>(ofGain);
+                v.v *= static_cast<float>(ofGain);
             }
 
             // 4. Feed estimated joint velocities back into KF

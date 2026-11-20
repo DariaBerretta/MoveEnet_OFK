@@ -61,3 +61,7 @@ docker/.env
 /moveEnetFlow/analysis/paper_figures/derived_data
 
 /tmp
+
+# Versioned Experiment A protocol and documentation
+!/moveEnetFlow/experiments/ExpA/README.md
+!/moveEnetFlow/experiments/ExpA/config/*.yaml

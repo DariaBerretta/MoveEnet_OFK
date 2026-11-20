@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "dataset": "eh36m",
+  "event_root": "/data/eh36m_testing_set_S9S11/events",
+  "rgb_root": "/data/eh36m_testing_set_S9S11/rgb",
+  "gt_root": "/data/eh36m_testing_set_S9S11/events",
+  "sensor": [640, 480],
+  "methods": ["moveenetofk", "movenet", "yolo", "openpose"],
+  "network_hz": {"moveenetofk": [2, 5, 10, 20, 50, 100, 200], "movenet": [2, 5, 10, 20, 50, 100, 200], "yolo": [2, 5, 10, 20, 50], "openpose": [2, 5, 10, 20, 50]},
+  "output_hz": 200,
+  "flow_hz": 200,
+  "kf": {"pu": 0.77, "muD": 0.06, "muV": 0.97, "roi": 20, "of_gain": 1.0, "use_lc": true},
+  "movenet_checkpoint": "/usr/local/src/hpe-core/example/movenet/models/e97_valacc0.81209.pth",
+  "gt_offset_s": 0.0,
+  "max_gt_gap_s": 0.05,
+  "gt_protocol_status": "validated_subject_to_input_audit",
+  "known_invalid_sequences": ["cam4_s11_greeting", "cam4_s9_eating", "cam4_s9_greeting", "cam4_s9_photo", "cam4_s9_photo_1", "cam4_s9_sittingdown_1", "cam4_s9_waiting_1", "cam4_s9_walking"]
+}

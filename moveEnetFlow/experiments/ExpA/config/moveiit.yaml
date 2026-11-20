@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "dataset": "moveiit",
+  "event_root": "/data/move-iit-it_testing",
+  "gt_root": "/data/move-iit-it_testing",
+  "sensor": [1280, 720],
+  "methods": ["moveenetofk", "movenet", "eventpointpose"],
+  "network_hz": {"moveenetofk": [2, 5, 10, 20, 50, 100, 200], "movenet": [2, 5, 10, 20, 50, 100, 200], "eventpointpose": [2, 5, 10, 20, 50, 100, 200]},
+  "output_hz": 200,
+  "flow_hz": 200,
+  "kf": {"pu": 0.77, "muD": 0.06, "muV": 0.97, "roi": 35, "of_gain": 1.0, "use_lc": true},
+  "movenet_checkpoint": "/usr/local/src/hpe-core/example/movenet/models/e97_valacc0.81209.pth",
+  "epp_checkpoint": "/workspace/model_mounts/eventpointpose/PointNet/models/model.pth",
+  "epp_script": "/workspace/moveEnetFlow/utils/eventPointPose_yarp_server.py",
+  "epp_geometry": "stretch",
+  "gt_offset_s": 0.0,
+  "max_gt_gap_s": 0.05,
+  "gt_protocol_status": "PROVISIONAL_mapping_and_time_offset_not_independently_validated"
+}
