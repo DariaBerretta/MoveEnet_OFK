@@ -11,15 +11,15 @@ import datetime
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
-import re
 import time
 from pathlib import Path
 
 from expa_common import (DEFAULT_RESULTS, EXPA, FLOW, append_log, git_head,
-                         inventory, read_config, safe_stem, sha256, write_csv)
+                         matched_inventory, read_config, safe_stem, sha256, write_csv)
 
 FIELDS = ('dataset', 'method', 'sample_id', 'network_hz', 'flow_hz', 'output_hz',
           'input_path', 'gt_path', 'prediction_csv', 'log_file', 'server_log',
@@ -34,6 +34,7 @@ def args_parser():
     p.add_argument('--method', action='append', help='Repeat to select methods; default all')
     p.add_argument('--network-hz', type=int, action='append', help='Repeat to select rates; default all')
     p.add_argument('--results-root', default=os.environ.get('HPE_RESULTS_ROOT', DEFAULT_RESULTS))
+    p.add_argument('--config-dir', type=Path, help='Override configuration directory (testing only)')
     p.add_argument('--run-id', help='New name under ExpA/, or existing run to resume')
     p.add_argument('--binary-dir', default=str(FLOW / 'build'))
     p.add_argument('--device', default='cuda:0')
@@ -76,6 +77,13 @@ def command_for(config, method, hz, input_path, pred_path, server_log, gpu_log, 
     elif method in ('openpose', 'yolo'):
         args += ['--w', str(w), '--h', str(h), '--no_video',
                  '--gpu_file', str(gpu_log), '--output_csv', str(pred_path)]
+        if method == 'openpose' and config.get('openpose_model_path'):
+            args += ['--op_model_path', config['openpose_model_path']]
+        if method == 'yolo':
+            if config.get('yolo_model_path'):
+                args += ['--yolo_model_path', config['yolo_model_path']]
+            if config.get('yolo_script'):
+                args += ['--YoloPose_script', config['yolo_script']]
     else:
         args += ['--model_path', config['epp_checkpoint'],
                  '--EventPointPose_script', config['epp_script'],
@@ -113,7 +121,7 @@ def count_prediction_rows(path):
 
 def main():
     opts = args_parser().parse_args()
-    config = read_config(opts.dataset)
+    config = read_config(opts.dataset, opts.config_dir)
     methods = opts.method or list(config['methods'])
     if len(methods) != len(set(methods)) or any(m not in config['methods'] for m in methods):
         raise ValueError('Method selection must be distinct and configured for dataset')
@@ -123,13 +131,8 @@ def main():
         raise ValueError('--resume requires --run-id')
     now = datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%SZ')
     run_id = opts.run_id or ('run_' + now + '_' + opts.dataset)
-    # Validate the run identifier while allowing underscores, dots and hyphens.
-    # The identifier must start with a letter or digit to avoid unsafe paths.
     if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]*', run_id):
-        raise ValueError(
-            '--run-id must start with a letter or digit and contain only '
-            'letters, numbers, underscores, dots or hyphens'
-        )
+        raise ValueError('--run-id must use only letters, numbers, underscores, dots or hyphens')
     run_dir = Path(opts.results_root).expanduser().resolve() / 'ExpA' / run_id
     if run_dir.exists() and not opts.resume:
         raise FileExistsError('Run already exists (use --resume after checking config): ' + str(run_dir))
@@ -137,7 +140,8 @@ def main():
         raise FileNotFoundError('Cannot resume missing run directory: ' + str(run_dir))
     selection = {'dataset': opts.dataset, 'methods': methods,
                  'network_hz': opts.network_hz, 'device': opts.device,
-                 'binary_dir': str(Path(opts.binary_dir).resolve()), 'limit': opts.limit}
+                 'binary_dir': str(Path(opts.binary_dir).resolve()), 'limit': opts.limit,
+                 'config_dir': str(opts.config_dir.resolve()) if opts.config_dir else None}
     snapshot = {'config': config, 'selection': selection}
     snapshot_path = run_dir / 'config.yaml'
     if opts.resume:
@@ -150,11 +154,9 @@ def main():
     plan = []
     excluded = []
     binaries = {}
+    matched, excluded = matched_inventory(config, methods)
     for method in methods:
-        data, rejected = inventory(config, method)
-        excluded.extend(rejected)
-        if opts.limit:
-            data = data[:opts.limit]
+        data = matched[method][:opts.limit] if opts.limit else matched[method]
         if not data:
             raise RuntimeError('No eligible GT-paired sequences for ' + opts.dataset + '/' + method)
         rates = opts.network_hz or config['network_hz'][method]

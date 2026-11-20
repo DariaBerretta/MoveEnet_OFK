@@ -21,10 +21,10 @@ VALID = {'eh36m': ('moveenetofk', 'movenet', 'yolo', 'openpose'),
          'moveiit': ('moveenetofk', 'movenet', 'eventpointpose')}
 
 
-def read_config(dataset):
+def read_config(dataset, config_dir=None):
     if dataset not in VALID:
         raise ValueError('Unsupported dataset: ' + dataset)
-    path = EXPA / 'config' / (dataset + '.yaml')
+    path = (Path(config_dir) if config_dir else EXPA / 'config') / (dataset + '.yaml')
     config = json.loads(path.read_text(encoding='utf-8'))
     if config['dataset'] != dataset or tuple(config['methods']) != VALID[dataset]:
         raise ValueError('Inconsistent dataset/methods: ' + str(path))
@@ -35,10 +35,16 @@ def read_config(dataset):
             raise ValueError('Unexpected network frequencies for ' + method)
     if config['output_hz'] != 200 or config['flow_hz'] != 200:
         raise ValueError('Expected fixed output and flow frequencies of 200 Hz')
-    if dataset == 'dhp19' and config['kf']['roi'] != 10:
-        raise ValueError('DHP19 ROI must be 10')
-    if config['kf']['of_gain'] != 1.0:
-        raise ValueError('ExpA effective OF gain must be 1.0')
+    expected_kf = {
+        'eh36m': {'pu': 0.77, 'muD': 0.06, 'muV': 0.97, 'roi': 20},
+        'dhp19': {'pu': 0.36, 'muD': 0.01, 'muV': 0.01, 'roi': 10},
+        'moveiit': {'pu': 0.77, 'muD': 0.06, 'muV': 0.97, 'roi': 35},
+    }
+    for name, expected in expected_kf[dataset].items():
+        if config['kf'][name] != expected:
+            raise ValueError('Unexpected {}={} for {}'.format(name, config['kf'][name], dataset))
+    if config['kf']['of_gain'] != 1.0 or config['kf']['use_lc'] is not True:
+        raise ValueError('ExpA requires of_gain=1.0 and use_lc=true')
     return config
 
 
@@ -85,7 +91,13 @@ def inventory(config, method):
             # Use event-side GT regardless of RGB directory layout.
             gt = Path(config['gt_root']) / rel.with_suffix('') / 'ch0GT200Hzskeleton' / 'data.log'
         else:
-            sample = rel.parent.as_posix() if rel.name == 'data.log' else rel.as_posix()
+            # eH36M event log and its RGB video must have the SAME sample_id.
+            # Event input: events/<sequence>/ch0dvs/data.log
+            # RGB input:   rgb/<sequence>.mp4
+            if dataset == 'eh36m':
+                sample = rel.parts[0]
+            else:
+                sample = rel.parent.as_posix() if rel.name == 'data.log' else rel.as_posix()
             gt = gt_for_event(dataset, source, config)
         name = sample.replace('/', '__')
         if name in seen:
@@ -103,6 +115,39 @@ def inventory(config, method):
             eligible.append({'dataset': dataset, 'method': method, 'sample_id': sample,
                              'input_path': str(source), 'gt_path': str(gt)})
     return eligible, excluded
+
+
+
+def matched_inventory(config, methods=None):
+    """Select only recordings available to every configured comparator.
+
+    Matching by the exact sample_id prevents a model from gaining an accuracy
+    advantage through a different sequence cohort. Exclusions are recorded for
+    the configured method whose valid data are absent. A selected subset of
+    methods still uses the full-dataset common cohort.
+    """
+    configured = list(config['methods'])
+    chosen = list(methods or configured)
+    per_method = {}
+    excluded = []
+    for method in configured:
+        available, rejected = inventory(config, method)
+        per_method[method] = {rec['sample_id']: rec for rec in available}
+        excluded.extend(rejected)
+    common = set.intersection(*(set(p) for p in per_method.values()))
+    # Some sequences have event input but no corresponding RGB input, or vice versa.
+    # Make this mismatch visible in excluded.csv instead of silently comparing
+    # different populations across methods.
+    full_union = set.union(*(set(p) for p in per_method.values()))
+    for sample in sorted(full_union - common):
+        for method in configured:
+            if sample in per_method[method]:
+                rec = per_method[method][sample]
+                excluded.append({**rec, 'reason': 'not_available_to_all_comparison_methods'})
+    if not common:
+        raise RuntimeError('No common GT-paired recordings across {}'.format(configured))
+    return {method: [per_method[method][sample] for sample in sorted(common)]
+            for method in chosen}, excluded
 
 
 def safe_stem(sample):

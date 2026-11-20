@@ -225,6 +225,7 @@ int main(int argc, char *argv[]){
         ss << std::left << std::setw(20) << "--muD" << std::setw(12) << "<double>" << ": KF measurement uncertainty (position)\n";
         ss << std::left << std::setw(20) << "--muV" << std::setw(12) << "<double>" << ": KF measurement uncertainty (velocity)\n";
         ss << std::left << std::setw(20) << "--roi" << std::setw(12) << "<int>" << ": ROI size for velocity estimation\n";
+        ss << std::left << std::setw(20) << "--of_gain" << std::setw(12) << "<double>" << ": effective optical-flow velocity gain (default 1.0)\n";
         ss << std::left << std::setw(20) << "--use_lc" << std::setw(12) << "<bool>" << ": use latency compensation in KF\n";
         ss << std::left << std::setw(20) << "--vis" << std::setw(12) << "" << ": enable on-screen visualization\n";
         ss << std::left << std::setw(20) << "--output_csv_f" << std::setw(12) << "<string>" << ": path to output csv file\n";

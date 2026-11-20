@@ -8,7 +8,7 @@ set -euo pipefail
 
 DATASET="dhp19"
 BINARY="/workspace/moveEnetFlow/build2/moveEnetOFK_offline"
-RESULTS_ROOT="${MOVENET_RESULTS_ROOT:-/data/MoveEnet_OFK_results}"
+RESULTS_ROOT="${HPE_RESULTS_ROOT:-/data/MoveEnet_OFK_results/experiment_cleanup}"
 
 # Empty values are filled by the selected dataset preset after argument parsing.
 DATA_ROOT=""
@@ -139,7 +139,7 @@ case "$DATASET" in
     CHECKPOINT_PATH="${CHECKPOINT_PATH:-/usr/local/src/hpe-core/example/movenet/models/dhp19_allcams_e33_valacc0.87996.pth}"
     IMG_W="${IMG_W:-346}"
     IMG_H="${IMG_H:-260}"
-    OUTPUT_DIR="${OUTPUT_DIR:-$RESULTS_ROOT/MOFK_dhp19_full_test/videos}"
+    OUTPUT_DIR="${OUTPUT_DIR:-$RESULTS_ROOT/ExpA/visualization/dhp19/movenet}"
 
     # The binary uses a 346x260 canvas and a padded 352x260 MoveNet transport.
     DATASET_ARGS=(--dhp19)
@@ -152,7 +152,7 @@ case "$DATASET" in
     CHECKPOINT_PATH="${CHECKPOINT_PATH:-/usr/local/src/hpe-core/example/movenet/models/e97_valacc0.81209.pth}"
     IMG_W="${IMG_W:-640}"
     IMG_H="${IMG_H:-480}"
-    OUTPUT_DIR="${OUTPUT_DIR:-$RESULTS_ROOT/MOFK_eh36m_full_test/videos}"
+    OUTPUT_DIR="${OUTPUT_DIR:-$RESULTS_ROOT/ExpA/visualization/eh36m/movenet}"
 
     # Important: eH36M must NOT receive --dhp19.
     DATASET_ARGS=(--w "$IMG_W" --h "$IMG_H")

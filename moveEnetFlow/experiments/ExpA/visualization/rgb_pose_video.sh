@@ -20,20 +20,20 @@ set -euo pipefail
 # The script is headless: it writes MP4 files without opening an OpenCV window.
 
 POSE_METHOD="${POSE_METHOD:-openpose}"
-RESULTS_ROOT="${MOVENET_RESULTS_ROOT:-/data/MoveEnet_OFK_results}"
+RESULTS_ROOT="${HPE_RESULTS_ROOT:-/data/MoveEnet_OFK_results/experiment_cleanup}"
 case "$POSE_METHOD" in
   openpose)
     POSE_LABEL="OpenPose"
     BINARY="/workspace/moveEnetFlow/build2/OpenPose_offline"
     MODEL_PATH="/usr/local/src/openpose/models/"
-    OUTPUT_DIR="$RESULTS_ROOT/OP_h36m_full_test/videos"
+    OUTPUT_DIR="$RESULTS_ROOT/ExpA/visualization/eh36m/openpose"
     ;;
   yolo)
     POSE_LABEL="YOLO Pose"
     BINARY="/workspace/moveEnetFlow/build2/YoloPose_offline"
     MODEL_PATH="/workspace/model_mounts/YoloPose/yolo26n-pose.pt"
     YOLO_SCRIPT="/workspace/model_mounts/YoloPose/YoloPose_yarp_server.py"
-    OUTPUT_DIR="$RESULTS_ROOT/YOLO_h36m_full_test/videos"
+    OUTPUT_DIR="$RESULTS_ROOT/ExpA/visualization/eh36m/yolo"
     ;;
   *) echo "Unknown POSE_METHOD: $POSE_METHOD" >&2; exit 2 ;;
 esac

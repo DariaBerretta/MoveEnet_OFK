@@ -15,8 +15,8 @@ set -euo pipefail
 #   MASK_ROOT/S13_1_1/ch3dvs/hotpixel_pixels.csv
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-RESULTS_ROOT="${MOVENET_RESULTS_ROOT:-/data/MoveEnet_OFK_results}"
-RESULT_DIR="$RESULTS_ROOT/EPP_dhp19_full_test"
+RESULTS_ROOT="${HPE_RESULTS_ROOT:-/data/MoveEnet_OFK_results/experiment_cleanup}"
+RESULT_DIR="$RESULTS_ROOT/ExpA/preprocessing/dhp19/eventpointpose"
 
 # -----------------------------------------------------------------------------
 # Defaults; every value can be overridden from the command line.

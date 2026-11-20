@@ -81,7 +81,7 @@ def main():
                 'mpjpe_aggregation': 'pooled_evaluable_joint_observations',
                 'pck_aggregation': 'pooled_correct_over_evaluable_joint_observations',
                 'n_failed_or_rejected_predictions': len(failures),
-                'complete_dataset_evaluation': not pending and not failed}
+                'complete_dataset_evaluation': not pending and not failed and metadata['configuration']['selection']['limit'] == 0}
     (output / 'protocol.json').write_text(json.dumps(protocol, indent=2) + '\n', encoding='utf-8')
     print(summary[['dataset', 'method', 'network_hz', 'n_sequences', 'mpjpe_px', 'pck_percent']].to_string(index=False))
     print('Results:', output)

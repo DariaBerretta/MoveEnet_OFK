@@ -65,3 +65,4 @@ docker/.env
 # Versioned Experiment A protocol and documentation
 !/moveEnetFlow/experiments/ExpA/README.md
 !/moveEnetFlow/experiments/ExpA/config/*.yaml
+!/moveEnetFlow/experiments/ExpA/**/README.md

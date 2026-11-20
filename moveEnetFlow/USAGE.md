@@ -1,6 +1,6 @@
 # moveEnetFlow — guida all'uso
 
-> Ambito: cartella `moveEnetFlow/` della repository `MoveEnet_OFK`, branch `main`, commit `af3a1fc420a7689fe47416a21c6f2a39bb64bfbf` (26 ottobre 2026). I percorsi sono quelli configurati nel codice: possono richiedere adattamenti su altre macchine.
+> Ambito: documentazione generale di `moveEnetFlow/`; ExpA ristrutturato nella branch `experiment-cleanup`. Alcune sezioni degli altri esperimenti descrivono ancora la versione storica.
 >
 > Nei comandi seguenti, la directory corrente è **`moveEnetFlow/`**, salvo indicazione diversa.
 
@@ -71,18 +71,17 @@ Prima di avviare una pipeline che usa YARP, verificare `yarp where`; se non esis
 
 **Docker è opzionale per i normali esperimenti di accuratezza** se tutte le dipendenze sono installate nativamente. Gli script assumono tuttavia spesso i percorsi del container (ad esempio `/workspace/moveEnetFlow/build`): usare `--binary`, `--checkpoint_path`, `--data_root` o altre opzioni disponibili per correggerli. Il file `docker/docker-compose.yml` monta la repository in `/workspace` e `${HOME}/data` in `/data`.
 
-### 3.3 Prova minima: una registrazione DHP19
+### 3.3 Experiment A — test minimo
+
+La nuova implementazione si trova in `experiments/ExpA/`.
 
 ```bash
-bash experiments/ExpA/expA_accuracy_vs_network_period/run_experiment_a.sh \
-  --dataset dhp19 \
-  --binary "$PWD/build/moveEnetOFK_offline" \
-  --data_file /data/dhp19_testing_set_S13toS17/S13_1_1/ch2dvs/data.log \
-  --net_period 0.05 --flow_period 0.005 \
-  --checkpoint_path /usr/local/src/hpe-core/example/movenet/models/dhp19_allcams_e33_valacc0.87996.pth
+python3 experiments/ExpA/scripts/run_experiment.py --dataset dhp19 --dry-run
+python3 -m unittest discover -s experiments/ExpA/tests -v
 ```
 
-Questo comando esegue **MoveEnetOFK e MoveEnet only** sulla stessa registrazione. Per verificare subito i parametri di uno script: `bash <script> --help`. **Attenzione:** alcune descrizioni di default stampate da `--help` sono rimaste storiche; i valori effettivi sono quelli assegnati nelle variabili all'inizio dello script.
+Per le configurazioni, il runner completo e gli output, consultare
+[`experiments/ExpA/README.md`](experiments/ExpA/README.md).
 
 ## 4. Dataset e ground truth
 
@@ -100,39 +99,21 @@ Il tool `utils/gt_XXXhz_interpolation.py` può creare log `ch0GT200Hzskeleton` i
 
 I runner pubblici di ExpA/ExpB sono piccoli **wrapper**: la logica comune è in `experiments/shared/`. Per nuove griglie modificare/riusare il runner condiviso, non duplicarne il contenuto.
 
-### 5.1 ExpA — accuratezza rispetto alla frequenza di rete
+### 5.1 ExpA — accuracy vs neural-network frequency
 
-**Domanda:** come variano **MPJPE e PCK** quando cambia `net_period`? Per MoveEnetOFK il flow è controllato separatamente; sono disponibili baseline MoveEnet only, OpenPose, YOLOPose ed EPP.
+ExpA è stato ristrutturato. Usare esclusivamente
+`experiments/ExpA/scripts/run_experiment.py` per nuove esecuzioni.
 
-| Metodo | Runner | Configurazione effettiva iniziale | Dataset |
-| --- | --- | --- | --- |
-| MoveEnetOFK + MoveEnet only | `experiments/ExpA/expA_accuracy_vs_network_period/run_experiment_a.sh` | `net=0.01 s`; `flow=0.005,0.01 s`; output `0.005 s` | DHP19 di default; `--dataset eh36m` disponibile. |
-| OpenPose | `experiments/ExpA/OP_expA_accuracy_vs_network_period/OP_run_experiment_a.sh` | `net=0.02,0.05,0.1,0.2,0.5 s`; output `0.005 s` | eH36M RGB. |
-| YOLOPose | `experiments/ExpA/YOLO_expA_accuracy_vs_network_period/YOLO_run_experiment_a.sh` | Come OpenPose | eH36M RGB. |
-| EventPointPose | `experiments/ExpA/EPP_expA_accuracy_vs_network_period/EPP_run_expA.sh` | **Attualmente solo `net=0.005 s`**; output `0.005 s`; FIFO 7.500, 2.048 punti | DHP19, camere 2/3. |
+- Dataset: eH36M, DHP19, Move-IIT-HPE.
+- Rate rete: 2, 5, 10, 20, 50, 100, 200 Hz per metodi event-based;
+  2, 5, 10, 20, 50 Hz per OpenPose/YOLOPose.
+- Output 200 Hz; optical flow di MoveEnetOFK a 200 Hz.
+- ROI: 20 (eH36M), **10 (DHP19)**, 35 (Move-IIT-HPE); of_gain=1.0.
+- Risultati sotto `/data/MoveEnet_OFK_results/experiment_cleanup/ExpA/`.
+- I notebook specialistici rimasti in `ExpA/analysis/validation`
+  sono riferimenti diagnostici e non i runner ufficiali.
 
-Esempi (da `moveEnetFlow/`):
-
-```bash
-# OFK + baseline: più periodi rete, optical flow fisso a 200 Hz
-bash experiments/ExpA/expA_accuracy_vs_network_period/run_experiment_a.sh \
-  --dataset eh36m --network_periods 0.02,0.05,0.1,0.2 \
-  --flow_period 0.005 --binary "$PWD/build/moveEnetOFK_offline"
-
-# OpenPose (RGB)
-bash experiments/ExpA/OP_expA_accuracy_vs_network_period/OP_run_experiment_a.sh \
-  --net_period 0.05 --binary "$PWD/build/OpenPose_offline"
-
-# YOLOPose (RGB)
-bash experiments/ExpA/YOLO_expA_accuracy_vs_network_period/YOLO_run_experiment_a.sh \
-  --net_period 0.05 --binary "$PWD/build/YoloPose_offline"
-
-# EPP (DHP19, FIFO scorrevole)
-bash experiments/ExpA/EPP_expA_accuracy_vs_network_period/EPP_run_expA.sh \
-  --net_period 0.05 --binary "$PWD/build/eventPointPose_offline"
-```
-
-OpenPose e YOLOPose utilizzano video RGB e, **nei rispettivi runner ExpA**, richiedono un dispositivo GPU (un `--device cpu` viene rifiutato dal wrapper). I runner hanno `--data_file`, `--data_root`, `--raw_dir`, `--log_dir` per limitare i dati o cambiare destinazione. Per EPP sono presenti anche `--model_path`, `--epp_script`, `--dump_root`, `--skip_existing`, `--max_packets`.
+Consultare [`experiments/ExpA/README.md`](experiments/ExpA/README.md).
 
 ### 5.2 ExpB — accuratezza rispetto al periodo optical flow
 
@@ -147,33 +128,26 @@ bash experiments/expB_accuracy_vs_flow_period/run_experiment_b.sh \
   --binary "$PWD/build/moveEnetOFK_offline"
 ```
 
-### 5.3 ExpA move-iit-hpe
+### 5.3 ExpA — Move-IIT-HPE
 
-`experiments/ExpA/expA_accuracy_vs_network_period/run_moveiit_expa.sh` è un **protocollo separato**, non un wrapper della griglia comune. Seleziona automaticamente le **59 registrazioni abbinate al GT Vicon** dei soggetti `luna` e `simon`, richiedendo che tutte siano presenti. Esegue MoveEnet only e OFK per `net_period = 0.01,0.02,0.05,0.1,0.2,0.5 s`, `flow=output=0.005 s`, `ROI=35`, configurazione **gain=1** e risoluzione ATIS nativa 1280×720. Controlla la configurazione tramite hash e salta solo i run già completi.
-
-```bash
-# Variabili personalizzabili via ambiente: DATA_ROOT, BINARY, CHECKPOINT, RESULTS, DEVICE
-BINARY="$PWD/build/moveEnetOFK_offline" \
-  bash experiments/ExpA/expA_accuracy_vs_network_period/run_moveiit_expa.sh
-```
-
-Questo protocollo è vincolato a una versione del binario compatibile con le sue impostazioni; **non** mescolare i risultati con run ottenuti usando un eseguibile differente.
+Le configurazioni sono in `experiments/ExpA/config/moveiit.yaml`.
+Il GT 2D Vicon è tuttora soggetto alla verifica del mapping anatomico
+e dell'offset temporale; le analisi in `ExpA/analysis/validation/`
+sono mantenute per confronto, non come protocollo definitivo.
 
 ### 5.4 Analisi ExpA/ExpB
 
-| Notebook | Uso |
-| --- | --- |
-| `ExpA/expA_accuracy_vs_network_period/notebooks/ExperimentA_MPJPE_PCK_vs_network_period.ipynb` | MoveEnet only/OFK: errore e accuratezza rispetto al periodo rete. |
-| `ExpA/OP_expA_accuracy_vs_network_period/notebooks/OP_ExperimentA_MPJPE_PCK_vs_network_period.ipynb` | ExpA OpenPose. |
-| `ExpA/YOLO_expA_accuracy_vs_network_period/notebooks/YOLOPose_MPJPE_PCK_vs_network_period.ipynb` | ExpA YOLOPose. |
-| `ExpA/EPP_expA_accuracy_vs_network_period/Notebooks/EPP_MPJPE_PCK_vs_network_period.ipynb` | ExpA EventPointPose. |
-| `ExpA/Comparison/ExperimentA_Method_Comparison_SELECTABLE_MODELS.ipynb` | Confronto selezionabile tra metodi e dataset; mantiene separate le varianti di flow e deduplica i baseline ripetuti. |
-| `ExpA/Comparison/ExperimentA_Joint_MPJPE_Comparison.ipynb` | Confronto degli errori **per joint**. |
-| `expB_accuracy_vs_flow_period/notebooks/experimentB_flow_period_analysis_SHARED_HEATMAPS.ipynb` | ExpB: analisi/heatmap con periodo optical flow variabile. |
+Per nuove acquisizioni ExpA, usare:
 
-I percorsi della tabella sono **relativi a `experiments/`**. Nei notebook, verificare le celle di configurazione (`RESULTS_ROOT`, dataset, metodi, filtri `np_*`/`fp_*` e cartella di esportazione) **prima** di eseguire tutte le celle. Il notebook di confronto crea una directory distinta sotto `MoveEnet_OFK_results/Comparison/` per ciascuna selezione.
+```bash
+python3 experiments/ExpA/analysis/accuracy_metrics.py --run-dir <RUN_DIR>
+python3 experiments/ExpA/visualization/plot_accuracy.py --run-dir <RUN_DIR>
+```
 
-**Attenzione EPP:** il runner EPP attuale salva per default in `EPP_dhp19_full_test/results/eng_200Hz/raw`, mentre il notebook di confronto generale cerca `EPP_dhp19_full_test/results/raw`. Occorre allineare esplicitamente il percorso nel notebook oppure passare `--raw_dir` al runner; i risultati non vengono trovati automaticamente fra queste due directory.
+Le analisi Move-IIT e di confronto articolare sono in
+`experiments/ExpA/analysis/validation/` e restano diagnostiche.
+Per ExpB resta il notebook specifico sotto
+`experiments/expB_accuracy_vs_flow_period/notebooks/`.
 
 ## 6. Benchmark di latenza
 
@@ -274,70 +248,36 @@ Analisi: `ExpEnergy/Notebooks/MoveIIT_Energy_RTF_Analysis.ipynb`; tabelle prodot
 
 ## 8. Output: struttura e nomi
 
-La maggior parte degli esperimenti scrive fuori dalla repository. Nei runner ExpA/ExpB e video la variabile `MOVENET_RESULTS_ROOT` sostituisce la root predefinita **`/data/MoveEnet_OFK_results`**. Il mapping Docker predefinito è `${HOME}/data` (host) ↔ `/data` (container). I runner Energy, Latency, Final e move-iit usano **variabili/opzioni proprie** (`RESULTS_BASE`, `--results_base`, `RESULTS`, `--results-dir`, ecc.).
+**Nuovo ExpA:** risultati centralizzati in
+`/data/MoveEnet_OFK_results/experiment_cleanup/ExpA/<run_id>/`.
+Impostare `HPE_RESULTS_ROOT` per cambiare la radice; un run conserva
+`config.yaml`, `metadata.json`, `manifest.csv`, `excluded.csv`, `audit.jsonl`,
+`predictions/`, `logs/`, `telemetry/`, `metrics/` e `figures/`.
 
-| Esperimento | Cartella risultati predefinita (relativa alla root `/data/MoveEnet_OFK_results`) |
-| --- | --- |
-| ExpA/ExpB MoveEnet, eH36M | `MOFK_eh36m_full_test/results/raw/` |
-| ExpA/ExpB MoveEnet, DHP19 | `MOFK_dhp19_full_test/results/raw/` |
-| ExpA OpenPose / YOLOPose | `OP_h36m_full_test/results/raw/` / `YOLO_h36m_full_test/results/raw/` |
-| ExpA EventPointPose | `EPP_dhp19_full_test/results/eng_200Hz/raw/` |
-| Video OFK / OpenPose / YOLOPose | `MOFK_<dataset>_full_test/videos/` / `OP_h36m_full_test/videos/` / `YOLO_h36m_full_test/videos/` |
-| Video EPP rolling | `EPP_dhp19_full_test/videos/rolling/` |
-| ExpLatency | `Latency/<session>/` |
-| ExpEnergy | `Energy/<session>/` (runner eseguito sull'host: default `~/data/...`) |
-| ExpFinal | `Final/<session>/` (host) |
-| ExpA move-iit | `Final_ROI_Gain1/Accuracy/moveiit/ExpA/` |
+Lo schema delle predizioni è
+`predictions/<dataset>/<method>/nn_<Hz>Hz/<sample_id>__<hash>.csv`.
+I risultati precedenti in cartelle come `MOFK_dhp19_full_test/`,
+`OP_h36m_full_test/`, `EPP_dhp19_full_test/` e `Final_ROI_Gain1/`
+sono **storici**, non devono essere cancellati né uniti ai nuovi output.
 
-Schema dei risultati della griglia MoveEnet:
-
-```text
-MOFK_dhp19_full_test/results/
-├── raw/
-│   └── fp_0p005/
-│       └── np_0p05/
-│           ├── S13_1_1__ch2dvs_moveenet_ofk_np_0p05_fp_0p005.csv
-│           └── S13_1_1__ch2dvs_moveenet_only_np_0p05_fp_0p005.csv
-└── logs/
-    ├── S13_1_1__ch2dvs_moveenet_ofk_np_0p05_fp_0p005.log
-    └── S13_1_1__ch2dvs_moveenet_ofk_np_0p05_fp_0p005_gpu.csv
-```
-
-- `np_0p05` significa `net_period=0.05 s` (20 Hz); `fp_0p005` significa `flow_period=0.005 s` (200 Hz). Il punto decimale è sostituito con `p`.
-- ExpA OpenPose/YOLOPose: `raw/np_<period>/<sequenza>_<metodo>_np_<period>.csv`; i log stanno in `results/logs/`.
-- ExpA EPP: `results/eng_200Hz/raw/np_<period>/<sequenza>__<camera>_net_flow_np_<period>.csv` e log C++/server in `results/eng_200Hz/logs/`. Il nome storico `net_flow` **non indica** che EPP usi l'optical flow.
-- Output video: script dedicati salvano CSV di predizione, MP4 ed eventuale overlay GT, log e talvolta CSV GPU nella cartella `videos/`.
-- CSV predizioni, CSV latenza e CSV energia sono **file differenti**: non sostituirli l'uno con l'altro nell'analisi.
+**ExpB, Latency, Energy ed ExpFinal** conservano temporaneamente i loro
+output storici fino alla rispettiva ristrutturazione.
 
 ## 9. Video e strumenti di debug
 
-| Strumento | Cosa fa | Utilizzo |
-| --- | --- | --- |
-| `experiments/ExpA/expA_accuracy_vs_network_period/MOFK_video.sh` | Video di una sequenza con predizione MoveEnetOFK e/o baseline, overlay GT. | `--dataset eh36m|dhp19`, `--mode ofk|moveenet_only|both`, `--data_file`, `--output_dir`, `--print_config`. |
-| `experiments/ExpA/OP_expA_accuracy_vs_network_period/OpenPose_video.sh` | Video RGB, GT e predizione OpenPose. | `--data_file`, `--gt_root`, `--output_dir`, `--net_period`. |
-| `experiments/ExpA/YOLO_expA_accuracy_vs_network_period/YOLO_video.sh` | Video RGB, GT e predizione YOLOPose. | Stesse opzioni principali. |
-| `experiments/ExpA/EPP_expA_accuracy_vs_network_period/EPP_video.sh` | Video EPP FIFO scorrevole; eventuale overlay GT e metriche; ricostruisce il video **dopo** l'inferenza. | `--data_file`, `--net_period`, `--output_dir`, `--prediction_only`, `--skip_metrics`. |
-| `experiments/ExpA/EPP_expA_accuracy_vs_network_period/EPP_video_no_rolling.sh` | Ablazione EPP con finestre indipendenti (senza FIFO rolling). | Richiede binario e server Python `*_no_rolling` **non inclusi/compilati** nel checkout esaminato. |
-| `experiments/ExpA/EPP_expA_accuracy_vs_network_period/EPP_generate_hpm.sh` | Genera maschere hot pixel PNG/NPY e coordinate CSV per registrazione. | `--data_root`, `--mask_root`, `--threshold`, `--force`; il binario `eventPointPose_hotpixel_mask` **non** è definito dal CMake principale. |
-| `utils/of_sanity/` + `utils/optical_flow_sanity.cpp` | Diagnostica OFK standalone: EROS, pose rilevate/fuse, vettori optical flow, ROI. | Compilazione con il suo CMake, poi `--data_file ... --output_video ...`. |
-| `utils/of_gui/` | Viewer interattivo locale del flusso OFK con engine C++ e server web Python. | Compilare l'engine nel sottoprogetto; `python3 utils/of_gui/server.py --host 127.0.0.1 --port 8765`. |
-| `utils/run_batch_processing.sh` | Elaborazione batch generica più vecchia, con parametri propri. | Preferire i runner ExpA/ExpB per esperimenti riproducibili. |
-| `analysis/epp_coordinate_sweep.py` | Verifica trasformazioni di coordinate EPP confrontando predizioni e GT CSV. | Controllare l'intestazione CSV: accetta convenzioni specifiche, non tutti gli output nuovi. |
-| `analysis/visualize_hpe_results.ipynb`, `utils/imgs_paper.ipynb`, `utils/MoveEnetOFK_image_for_pipeline.ipynb` | Visualizzazioni e figure per analisi/documentazione. | Notebook di post-processing: controllare le celle iniziali per i path e le opzioni di salvataggio. |
+| Strumento | Uso |
+| --- | --- |
+| `experiments/ExpA/visualization/movenet_video.sh` | Video MoveEnetOFK/MoveEnet-only con GT; eH36M e DHP19. |
+| `experiments/ExpA/visualization/rgb_pose_video.sh` | RGB, GT e predizione OpenPose/YOLOPose (`POSE_METHOD=openpose` o `POSE_METHOD=yolo`). |
+| `experiments/ExpA/visualization/eventpointpose_video.sh` | EPP rolling FIFO, overlay GT e metriche opzionali. |
+| `experiments/ExpA/preprocessing/eventpointpose_generate_hpm.sh` | Maschere hot pixel, **solo** per analisi raw. DHP19 già preprocessato non deve essere filtrato nuovamente. |
+| `utils/of_sanity/` e `utils/of_gui/` | Diagnostica ottica e viewer interattivo. |
 
-Per una verifica non invasiva dell'optical flow:
-
-```bash
-cmake -S utils/of_sanity -B utils/of_sanity/build
-cmake --build utils/of_sanity/build -j
-utils/of_sanity/build/optical_flow_sanity \
-  --data_file /data/eh36m_testing_set_S9S11/events/<sequenza>/ch0dvs/data.log \
-  --output_video /tmp/of_sanity.mp4
-```
-
-Le maschere hot pixel generate da `EPP_generate_hpm.sh` sono pertinenti alla modalità EPP **raw**: il protocollo ExpA corrente usa `already_filtered` e non deve riapplicare i filtri ai `data.log` già preprocessati.
-
-Molti script video hanno come default un binario in `build2/`, mentre i runner di accuratezza usano `build/`: se è stato compilato solo `build/`, passare **`--binary "$PWD/build/<eseguibile>"`**.
+Gli script video scrivono per default in
+`/data/MoveEnet_OFK_results/experiment_cleanup/ExpA/visualization/`,
+ma non sostituiscono il runner ExpA usato per le metriche del paper.
+Alcuni video utilizzano di default binari in `build2/`; passare `--binary`
+se sono compilati in `build/`.
 
 ## 10. Procedura consigliata e controlli
 

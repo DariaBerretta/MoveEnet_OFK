@@ -1,7 +1,9 @@
 # Experiment A — Accuracy as a function of network inference frequency
 
-This directory contains the **new** unified Experiment A implementation. It does
-not overwrite or delete historical scripts, notebooks, or existing results. All
+This directory contains the **canonical** unified Experiment A implementation.
+Obsolete single-method runner wrappers and duplicated metric notebooks were
+removed from this Git branch; Git history and the `main` branch preserve them.
+Previously acquired results are never deleted or modified. All
 new results are stored outside Git under `HPE_RESULTS_ROOT` (default:
 `/data/MoveEnet_OFK_results/experiment_cleanup`).
 
@@ -17,8 +19,9 @@ new results are stored outside Git under `HPE_RESULTS_ROOT` (default:
 - All event-based methods use network rates 2, 5, 10, 20, 50, 100, 200 Hz.
 - RGB OpenPose/YOLOPose use network rates 2, 5, 10, 20, 50 Hz.
 - `use_lc=true` for the MoveEnetOFK Kalman filter.
-- Execute every GT-paired, non-excluded testing sequence. Missing GT and known
-  invalid eH36M recordings are logged to `excluded.csv`, not silently skipped.
+- Execute **the common GT-paired cohort** shared by all comparators for each dataset.
+  Missing GT, known invalid eH36M recordings and unmatched recordings are logged
+  in `excluded.csv`, never silently ignored. This makes the per-model comparisons fair.
 - No automatic temporal shift of GT is applied. Move-IIT-HPE marker mapping and
   time offset still require independent validation before paper claims.
 
@@ -132,10 +135,85 @@ validated. It records provisional provenance and can generate exploratory plots.
   executed by the installer. End-to-end runtime tests must be run on the workstation.
 - `output_hz=200` is the requested sampling cadence. Actual output timestamp
   regularity and achieved inference frequency require measurement from the logs.
-- Older ExpA notebooks remain in place for comparison; this code does not remove
-  them or migrate older results.
+- Four specialist notebooks are retained in `analysis/validation/` for GT, time
+  alignment and joint-level comparisons. They are **references**, not the current
+  automatic metric pipeline; their historic absolute paths still target old outputs.
+- Accuracy video scripts moved to `visualization/` and their default destinations
+  now point under the same `experiment_cleanup/ExpA/visualization` results root.
+  Video tools are optional; they do not participate in the ExpA metrics worklist.
+- EventPointPose debug/adapter tests live under `tests/epp/`. They require extra
+  dependencies and can be run separately from the core Python unit tests.
+- `preprocessing/eventpointpose_generate_hpm.sh` is retained for raw-data
+  investigations. Normal DHP19 ExpA uses already-filtered inputs and should
+  **not** repeat that preprocessing.
 - The `--limit` option is for development and should not be used for paper figures.
 
 The installer also updates `.gitignore` to explicitly track these three YAML
 configuration files and this README. The original `.gitignore` otherwise ignores
 all experiment files except shell scripts, Python, and notebooks.
+
+## Repository cleanup and tests
+
+The old per-method scripts and duplicated MPJPE/PCK notebooks have been removed
+from the branch, not from Git history. To audit: `git diff main...experiment-cleanup`.
+No physical experiment datasets or recorded predictions are removed.
+
+Run deterministic tests without Docker/YARP/GPU:
+
+```bash
+cd /workspace
+python3 -m unittest discover -s moveEnetFlow/experiments/ExpA/tests -p "test_*.py" -v
+```
+
+One of these tests executes the *real* Experiment A orchestration with a
+synthetic DHP19 sample and a mock C++ executable. It validates the recorded
+command, output CSV, manifest, resumption and output validator. **This does
+not validate actual MoveNet/PointNet inference**.
+
+On the workstation (after building the C++ targets and starting YARP), run
+a single GT-paired recording for each method using a fresh run ID:
+
+```bash
+cd /workspace/moveEnetFlow
+python3 experiments/ExpA/scripts/run_experiment.py \
+  --dataset dhp19 --method moveenetofk --network-hz 5 --limit 1 \
+  --run-id smoke_dhp19_ofk_5hz
+python3 experiments/ExpA/scripts/run_experiment.py \
+  --dataset dhp19 --method movenet --network-hz 5 --limit 1 \
+  --run-id smoke_dhp19_movenet_5hz
+python3 experiments/ExpA/scripts/run_experiment.py \
+  --dataset dhp19 --method eventpointpose --network-hz 5 --limit 1 \
+  --run-id smoke_dhp19_epp_5hz
+```
+
+Then validate each `--run-id` directory with
+`python3 experiments/ExpA/scripts/validate_results.py --run-dir ...`.
+Test runs with `--limit` cannot be labeled as complete-dataset paper figures.
+
+Visualization utilities:
+
+```bash
+bash experiments/ExpA/visualization/movenet_video.sh --help
+bash experiments/ExpA/visualization/eventpointpose_video.sh --help
+POSE_METHOD=yolo bash experiments/ExpA/visualization/rgb_pose_video.sh --help
+bash experiments/ExpA/preprocessing/eventpointpose_generate_hpm.sh --help
+```
+
+### Run every model's live smoke test sequentially
+
+After the offline tests pass and you have rebuilt the C++ binaries, run:
+
+```bash
+cd /workspace/moveEnetFlow
+python3 experiments/ExpA/scripts/smoke_all.py --dataset all --plan
+python3 experiments/ExpA/scripts/smoke_all.py --dataset dhp19
+# After checking the DHP19 logs, test the remaining two datasets:
+python3 experiments/ExpA/scripts/smoke_all.py --dataset eh36m
+python3 experiments/ExpA/scripts/smoke_all.py --dataset moveiit
+```
+
+The real smoke runner performs **one recording at 5 Hz for each method**,
+sequentially, and checks the resulting 13-joint CSV/manifest and rejects median output
+rate deviations greater than 20%. It uses a unique
+UTC run ID. It does not claim that model inference frequencies or GT annotation
+quality were independently verified. Those require additional log inspection.
